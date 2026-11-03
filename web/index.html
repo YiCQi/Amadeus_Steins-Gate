@@ -62,8 +62,8 @@
       <button type="submit" id="btn-send" class="icon accent" data-i18n-title="send" title="Send" aria-label="Send">
         <svg viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-2.5-6.5z"/></svg>
       </button>
-      <button type="button" id="btn-chat" class="icon" data-i18n-title="toChat" title="Text chat" aria-label="Text chat">
-        <svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg>
+      <button type="button" id="btn-hangup" class="icon hangup" data-i18n-title="hangup" title="Hang up" aria-label="Hang up">
+        <svg viewBox="0 0 24 24"><path d="M3 14.6c5-4.4 13-4.4 18 0l-2.4 2.5a1 1 0 0 1-1.3.1l-2.2-1.6a1 1 0 0 1-.4-1l.3-1.6a10 10 0 0 0-6 0l.3 1.6a1 1 0 0 1-.4 1l-2.2 1.6a1 1 0 0 1-1.3-.1z"/></svg>
       </button>
       <button type="button" id="btn-settings" class="icon" data-i18n-title="settings" title="Settings" aria-label="Settings">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
@@ -73,8 +73,11 @@
     <!-- text chat, messaging-app style (chat.js) -->
     <section id="chat" aria-label="Chat">
       <header class="chat-head">
-        <button type="button" id="chat-back" class="chat-btn" data-i18n-title="back" title="Back" aria-label="Back">
-          <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>
+        <button type="button" id="chat-settings" class="chat-btn" data-i18n-title="settings" title="Settings" aria-label="Settings">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>
+        </button>
+        <button type="button" id="chat-memory" class="chat-btn" data-i18n-title="mem.open" title="Her memory" aria-label="Her memory">
+          <svg viewBox="0 0 24 24"><path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V5a2 2 0 0 0-3-1zM15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1"/></svg>
         </button>
         <div class="chat-title"><b data-i18n="chatName">Makise Kurisu</b><small id="chat-status"></small></div>
         <button type="button" id="chat-call" class="chat-btn" data-i18n-title="videoCall" title="Video call" aria-label="Video call">
@@ -149,12 +152,21 @@
 
       <div class="row">
         <button type="button" id="btn-test-voice" data-i18n="set.test">Test voice</button>
-        <button type="button" id="btn-reset" class="danger" data-i18n="set.reset">Erase memory</button>
+        <button type="button" id="btn-memories" data-i18n="set.memory">Her memory…</button>
         <span class="spacer"></span>
         <button value="cancel" formnovalidate data-i18n="set.cancel">Cancel</button>
         <button type="submit" value="save" class="primary" data-i18n="set.save">Save</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- her memory (memory.js): what she knows, what she remembers, what she was asked to forget -->
+  <dialog id="memory">
+    <header class="mem-head">
+      <h2 data-i18n="mem.title">Her memory</h2>
+      <button type="button" id="mem-close" class="icon" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </header>
+    <div id="mem-body"></div>
   </dialog>
 
   <script type="module" src="app.js"></script>

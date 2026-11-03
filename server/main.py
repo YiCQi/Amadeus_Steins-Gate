@@ -1,4 +1,8 @@
-"""Amadeus backend: serves the UI and proxies LLM / TTS / STT."""
+"""Amadeus backend: serves the UI and proxies LLM / TTS / STT.
+
+Calls and the text chat share one memory (memory.py): every message goes into one timeline,
+and both see what was said in the other.
+"""
 import asyncio
 import io
 import itertools
@@ -14,7 +18,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, kana, persona, stickers
+from . import config, kana, memory, persona, stickers
 from .llm import LLMError, stream_chat
 from .stt import WhisperSTT
 from .tts import TTSError, Voice, speakable
@@ -23,24 +27,13 @@ cfg = config.load_config()
 tts = Voice(cfg.get("tts", {}))
 tts.warm()
 stt = WhisperSTT(cfg.get("stt", {}))
-MAX_HISTORY = int(cfg.get("llm", {}).get("max_history", 30))
 kana.warm()
 
 app = FastAPI(title="Amadeus")
 
 
-# ---------- conversation history ----------
-
-def load_history(path: Path = config.HISTORY_PATH) -> list[dict]:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-
-
-def save_history(history: list[dict], path: Path = config.HISTORY_PATH, keep: int = MAX_HISTORY * 2):
-    config.DATA_DIR.mkdir(exist_ok=True)
-    path.write_text(json.dumps(history[-keep:], ensure_ascii=False, indent=1), encoding="utf-8")
+def sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def sticker_meaning(sid: str) -> str:
@@ -48,21 +41,30 @@ def sticker_meaning(sid: str) -> str:
     return s["meaning"] if s else (sid or "")
 
 
-def history_for_display(history: list[dict]) -> list[dict]:
-    out = []
-    for m in history:
-        if m["role"] == "user":
-            if not persona.is_connect_event(m["content"]):
-                out.append({"role": "user", "sub": m["content"]})
-        else:
-            for line in m["content"].splitlines():
-                seg = persona.parse_line(line)
-                if seg:
-                    out.append({"role": "assistant", **seg})
-    return out
+def need_model() -> dict:
+    settings = config.load_settings()
+    if not settings.get("model"):
+        raise HTTPException(400, "No model configured. Open settings and enter your API details.")
+    return settings
 
 
-# ---------- API ----------
+_background: set[asyncio.Task] = set()
+
+
+def remember_later(settings: dict, language: str):
+    """After a reply: let her consolidate older conversation into long-term memory, in the background."""
+    async def summarize(system: str, text: str) -> str:
+        out = ""
+        async for chunk in stream_chat({**settings, "temperature": 0.3}, system, [{"role": "user", "content": text}]):
+            out += chunk
+        return out
+
+    task = asyncio.create_task(memory.consolidate(summarize, language))
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+
+
+# ---------- the video call ----------
 
 class ChatIn(BaseModel):
     message: str | None = None
@@ -71,48 +73,46 @@ class ChatIn(BaseModel):
 
 @app.post("/api/chat")
 async def chat(body: ChatIn):
-    settings = config.load_settings()
-    if not settings.get("model"):
-        raise HTTPException(400, "No model configured. Open settings and enter your API details.")
-
+    settings = need_model()
     language = settings.get("language", "en")
-    user_text = persona.connect_event(language) if body.event == "connect" else (body.message or "").strip()
+    connect = body.event == "connect"
+    user_text = persona.connect_event(language) if connect else (body.message or "").strip()
     if not user_text:
         raise HTTPException(400, "Empty message")
 
-    history = load_history()
-    # Keep user/assistant strictly alternating (Anthropic requires it).
-    if history and history[-1]["role"] == "user":
-        history.pop()
-    history = [m if m["role"] == "user" else {**m, "content": persona.normalize_reply(m["content"])}
-               for m in history[-MAX_HISTORY * 2:]]
-    messages = history + [{"role": "user", "content": user_text}]
-    system = persona.build_system_prompt(settings.get("user_name", ""), language,
-                                         context=persona.chat_context(load_history(config.CHAT_PATH), sticker_meaning))
+    mem, recent = memory.context("call", "" if connect else user_text, sticker_meaning)
+    messages = persona.call_messages(recent + [{"role": "user", "content": user_text}])
+    system = persona.build_system_prompt(settings.get("user_name", ""), language, context=mem)
+    if connect:
+        memory.add("call", "event", kind="call_start")
+    else:
+        memory.add("call", "user", user_text)
 
     # A new turn makes any voice still being synthesised for the previous one stale.
     for task in voices.values():
         task.cancel()
     voices.clear()
 
-    def sse(event: str, data: dict) -> str:
-        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
     async def events():
         t0 = time.perf_counter()
         timing: dict[str, float] = {}
         mark = lambda key: timing.setdefault(key, round(time.perf_counter() - t0, 2))  # noqa: E731
-        line, full = "", ""
+        line, kept, feelings = "", [], []
         early = None  # voice id already started for the line being streamed
 
         def finish(text: str):
             """A whole line has arrived: make sure it is voiced, then send its subtitle."""
             nonlocal early
+            if persona.is_hangup(text):
+                yield sse("hangup", {})
+                return
             seg = persona.parse_line(text)
             vid, early = early, None
             if not seg:
                 return
             mark("first_line")
+            kept.append(persona.format_line(seg))
+            feelings.append(seg["emotion"])
             if vid is None:
                 vid = start_voice(seg["ja"], seg["emotion"])
                 yield sse("voice", {"id": vid, "emotion": seg["emotion"], "ja": seg["ja"], "kana": kana.reading(speakable(seg["ja"]))})
@@ -122,7 +122,6 @@ async def chat(body: ChatIn):
             async for chunk in stream_chat(settings, system, messages):
                 mark("first_token")
                 line += chunk
-                full += chunk
                 while "\n" in line:
                     done, line = line.split("\n", 1)
                     for ev in finish(done):
@@ -147,25 +146,33 @@ async def chat(body: ChatIn):
         mark("total")
         timing.setdefault("first_voice_text", timing.get("first_line"))
         print("[timing]", "  ".join(f"{k}={v}s" for k, v in timing.items()), flush=True)
-        save_history(messages + [{"role": "assistant", "content": persona.normalize_reply(full)}])
+        if kept:
+            memory.add("call", "assistant", "\n".join(kept))
+        yield sse("mood", {"value": memory.feel(feelings)})
         yield sse("done", {"timing": timing})
+        remember_later(settings, language)
 
     return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 
 
-# ---------- text chat (WeChat style): text bubbles, her stickers, the odd Japanese voice message ----------
+class CallEndIn(BaseModel):
+    seconds: float = 0
+    by: str = "user"   # who hung up: "user" or "kurisu"
 
-CHAT_KEEP = 400   # messages kept for display; the model sees the last MAX_HISTORY turns
 
+@app.post("/api/call/end")
+async def call_end(body: CallEndIn):
+    """The call is over: it goes into her memory, and into the chat as a call record."""
+    e = memory.add("call", "event", kind="call_end", seconds=round(body.seconds), by="kurisu" if body.by == "kurisu" else "user")
+    return {"role": "event", "kind": "call", "seconds": e["seconds"], "by": e["by"], "ts": e["ts"]}
+
+
+# ---------- text chat: text bubbles, her stickers, the odd Japanese voice message ----------
 
 class TextIn(BaseModel):
     message: str | None = None
     messages: list[str] | None = None   # several sent while she was still replying: one turn
     sticker: str | None = None          # the user sent one of her stickers (its id)
-
-
-def sse(event: str, data: dict) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def wav_seconds(audio: bytes) -> float | None:
@@ -205,11 +212,8 @@ def bubble_out(b: dict) -> dict | None:
 
 @app.post("/api/text")
 async def text_chat(body: TextIn):
-    settings = config.load_settings()
-    if not settings.get("model"):
-        raise HTTPException(400, "No model configured. Open settings and enter your API details.")
+    settings = need_model()
     language = settings.get("language", "en")
-    now = int(time.time() * 1000)
     if body.sticker:
         s = stickers.find(body.sticker)
         if not s:
@@ -219,15 +223,17 @@ async def text_chat(body: TextIn):
         sent = [m.strip() for m in (body.messages or [body.message or ""]) if m and m.strip()]
         if not sent:
             raise HTTPException(400, "Empty message")
-    user = [{"role": "user", "content": m, "ts": now} for m in sent]
 
-    thread = load_history(config.CHAT_PATH)
-    messages = persona.chat_messages(thread[-MAX_HISTORY * 2:] + user, sticker_meaning)
-    system = persona.build_chat_prompt(settings.get("user_name", ""), language, stickers.prompt_list(),
-                                       context=persona.call_context(load_history()))
+    query = " ".join(sticker_meaning(persona.user_sticker(m)) if persona.user_sticker(m) else m for m in sent)
+    mem, recent = memory.context("chat", query, sticker_meaning)
+    turn = [{"role": "user", "content": m} for m in sent]
+    messages = persona.chat_messages(recent + turn, sticker_meaning)
+    system = persona.build_chat_prompt(settings.get("user_name", ""), language, stickers.prompt_list(), context=mem)
+    for m in sent:
+        memory.add("chat", "user", m)
 
     async def events():
-        line, kept = "", []
+        line, kept, feelings = "", [], []
 
         async def bubble(raw: str):
             b = persona.parse_chat_line(raw)
@@ -242,6 +248,8 @@ async def text_chat(body: TextIn):
                 return None
             if out["kind"] == "voice":
                 out["seconds"] = secs
+            if b["kind"] != "sticker":
+                feelings.append(b["emotion"])
             kept.append(persona.format_chat(b if b["kind"] != "sticker" else {**b, "name": out["id"]}))
             return sse("message", out)
 
@@ -257,25 +265,32 @@ async def text_chat(body: TextIn):
             if ev:
                 yield ev
         except LLMError as e:
-            save_history(thread + user, config.CHAT_PATH, CHAT_KEEP)   # keep what the user sent
             yield sse("error", {"message": str(e)})
             return
         except Exception as e:  # network errors etc.
-            save_history(thread + user, config.CHAT_PATH, CHAT_KEEP)
             yield sse("error", {"message": f"{type(e).__name__}: {e}"})
             return
-        reply = {"role": "assistant", "content": "\n".join(kept), "ts": int(time.time() * 1000)}
-        save_history(thread + user + ([reply] if kept else []), config.CHAT_PATH, CHAT_KEEP)
+        if kept:
+            memory.add("chat", "assistant", "\n".join(kept))
+        yield sse("mood", {"value": memory.feel(feelings)})
         yield sse("done", {})
+        remember_later(settings, language)
 
     return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/text/history")
 async def text_history():
+    """The chat as the page shows it: chat messages and call records, from the shared timeline."""
     out = []
-    for m in load_history(config.CHAT_PATH):
+    for m in memory.log():
         ts = m.get("ts")
+        if m["role"] == "event":
+            if m.get("kind") == "call_end":
+                out.append({"role": "event", "kind": "call", "seconds": m.get("seconds", 0), "by": m.get("by"), "ts": ts})
+            continue
+        if m["ch"] != "chat":
+            continue
         if m["role"] == "user":
             sid = persona.user_sticker(m["content"])
             s = stickers.find(sid) if sid else None
@@ -286,7 +301,7 @@ async def text_history():
                 shown = bubble_out(b)
                 if shown:
                     out.append({"role": "assistant", "ts": ts, **shown})
-    return out
+    return out[-600:]
 
 
 @app.get("/api/stickers")
@@ -302,7 +317,33 @@ async def voice_message(name: str):
     return FileResponse(path, media_type="audio/wav" if path.suffix == ".wav" else "audio/mpeg")
 
 
-# ---------- voice jobs: started from the chat stream, fetched by id ----------
+# ---------- her memory: what she remembers, and forgetting (sealing) things ----------
+
+class MemoryIn(BaseModel):
+    kind: str        # "episode", "fact", or "recent" (the conversation not yet sorted into memories)
+    id: int | None = None
+
+
+@app.get("/api/memory")
+async def memory_overview():
+    return memory.overview()
+
+
+@app.post("/api/memory/forget")
+async def memory_forget(body: MemoryIn):
+    if not memory.forget(body.kind, body.id):
+        raise HTTPException(404, "Nothing to forget there")
+    return memory.overview()
+
+
+@app.post("/api/memory/restore")
+async def memory_restore(body: MemoryIn):
+    if not memory.restore(body.kind, body.id):
+        raise HTTPException(404, "Nothing sealed there")
+    return memory.overview()
+
+
+# ---------- voice jobs: started from the call stream, fetched by id ----------
 
 voices: dict[str, asyncio.Task] = {}
 _voice_ids = itertools.count(1)
@@ -381,17 +422,16 @@ async def set_settings(update: dict):
 
 @app.get("/api/history")
 async def get_history():
-    return history_for_display(load_history())
-
-
-@app.post("/api/reset")
-async def reset():
-    """Erase her memory: the call, the text chat and its voice messages."""
-    save_history([])
-    save_history([], config.CHAT_PATH)
-    for f in config.VOICE_DIR.glob("*") if config.VOICE_DIR.exists() else []:
-        f.unlink(missing_ok=True)
-    return {"ok": True}
+    """What was said on calls, for the call's log panel."""
+    out = []
+    for m in memory.log():
+        if m["ch"] != "call" or m["role"] == "event":
+            continue
+        if m["role"] == "user":
+            out.append({"role": "user", "sub": m["content"]})
+        else:
+            out += [{"role": "assistant", **seg} for seg in map(persona.parse_line, m["content"].splitlines()) if seg]
+    return out[-300:]
 
 
 @app.get("/api/status")
@@ -400,6 +440,7 @@ async def status():
     return {
         "llm_ready": bool(s.get("model")) and (bool(s.get("api_key")) or s.get("provider") == "openai"),
         "tts_enabled": tts.enabled,
+        "mood": round(memory.mood(), 3),
         **(await tts.status() if tts.enabled else {"engine": None, "sovits_ready": False}),
     }
 

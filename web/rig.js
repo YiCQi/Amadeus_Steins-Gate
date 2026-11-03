@@ -59,11 +59,11 @@ const POSES = {
   angry: { browAngle: -1, browY: -0.45, eyeOpen: 1, eyeAngry: 0.75, mouthForm: -0.7, mouthBase: 0.42, mouthWide: 0.3, angleY: -3, angleX: -4, angleZ: -2, cheek: 0.25 },
   furious: { browAngle: -1, browY: -0.55, eyeOpen: 1.1, eyeAngry: 0.9, irisScale: 0.84, mouthForm: -0.9, mouthBase: 0.62, mouthWide: 0.4, angleY: -4, angleZ: 1.5, cheek: 0.4 },
   pout: { mouthPout: 1, cheekPuff: 1, mouthForm: -0.25, mouthSkew: 0.25, eyeOpen: 0.84, gazeX: -0.6, gazeY: 0.15, browAngle: 0.4, browY: -0.1, angleX: 8, angleZ: 3, angleY: -3, cheek: 0.6 },
-  disgusted: { eyeOpen: 0.55, eyeAngry: 0.2, browAngle: -0.35, browY: -0.15, mouthForm: -0.5, mouthSkew: -0.55, mouthWave: 0.25, angleY: 4, angleX: -3, angleZ: -3, gazeY: 0.1 },
-  embarrassed: { cheek: 1, hatch: 1, eyeOpen: 0.8, gazeX: -0.35, gazeY: 0.55, angleY: -7, angleX: 8, angleZ: 3.5, browAngle: 0.55, mouthForm: -0.25, mouthWide: -0.35, mouthWave: 0.8 },
+  disgusted: { eyeOpen: 0.55, eyeAngry: 0.2, browAngle: -0.35, browY: -0.15, mouthForm: -0.5, mouthSkew: -0.55, angleY: 4, angleX: -3, angleZ: -3, gazeY: 0.1 },
+  embarrassed: { cheek: 1, hatch: 1, eyeOpen: 0.8, gazeX: -0.35, gazeY: 0.55, angleY: -7, angleX: 8, angleZ: 3.5, browAngle: 0.55, mouthForm: -0.25, mouthWide: -0.35 },
   sad: { browAngle: 0.95, browY: -0.1, eyeOpen: 0.66, gazeY: 0.55, angleY: -8, angleZ: -2, mouthForm: -0.65 },
   surprised: { eyeOpen: 1.18, irisScale: 0.9, browY: 1, mouthBase: 0.4, angleY: 4.5, gazeY: -0.05 },
-  puzzled: { angleZ: 9, angleX: 4, angleY: 1, browAsym: 0.9, browY: 0.15, eyeOpen: 1.04, eyeAsym: 0.6, mouthForm: -0.1, mouthWave: 0.45, gazeY: -0.1 },
+  puzzled: { angleZ: 9, angleX: 4, angleY: 1, browAsym: 0.9, browY: 0.15, eyeOpen: 1.04, eyeAsym: 0.6, mouthForm: -0.1, gazeY: -0.1 },
   thinking: { gazeX: 0.55, gazeY: -0.65, angleZ: -5, angleX: 7, angleY: 4, browAngle: -0.25, browY: 0.1, mouthForm: -0.15 },
   listening: { angleZ: 3.5, angleY: -1.5, browY: 0.2, eyeOpen: 1.04, gazeY: 0.05 },   // UI state, not an LLM emotion
 };
@@ -87,6 +87,7 @@ class Motion {
     this.energy = 0; this.energySlow = 0;
     // hair: left lock, bangs, right lock swing sideways; y bobs the tips
     this.hair = { L: { x: 0, v: 0 }, C: { x: 0, v: 0 }, R: { x: 0, v: 0 }, Y: { x: 0, v: 0 } };
+    this.mood = 0.55;              // her overall mood, 0..1 (server/memory.py); colours every expression
     this.seed = Math.random() * 100;
   }
 
@@ -133,6 +134,14 @@ class Motion {
     const pose = this.pose, p = this.p, s = this.seed;
     const target = {};
     for (const [k, [rest]] of Object.entries(PARAMS)) target[k] = pose[k] ?? rest;
+
+    // her mood underneath whatever she's showing: in a good mood the corners of her mouth sit
+    // a little higher and her eyes soften; in a bad one it shows in her brows and heavier lids
+    const md = this.mood - 0.55;
+    target.mouthForm += 0.6 * md;
+    target.eyeSmile += 0.4 * Math.max(0, md - 0.05);
+    target.browAngle += 0.6 * Math.max(0, -md - 0.05);
+    target.eyeOpen -= 0.3 * Math.max(0, -md - 0.15);
 
     // idle: slow head drift, so she never freezes
     target.angleX += 2.4 * Math.sin(0.29 * t + s) + 1.1 * Math.sin(0.83 * t + 2 * s);
@@ -860,6 +869,9 @@ export class RigAvatar {
     if (this.fallback) return this.fallback.setExpression(emotion);
     if (emotion !== this.motion.poseName) this.motion.setPose(emotion, performance.now() / 1000);
   }
+
+  // her overall mood, 0 (bad) .. 1 (great); it eases in through the pose springs
+  setMood(v) { if (Number.isFinite(v)) this.motion.mood = Math.min(1, Math.max(0, v)); }
 
   attach(analyser) {
     this.analyser = analyser;

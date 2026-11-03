@@ -60,7 +60,7 @@ def load():
 # Commas stay inside a unit, where VITS phrases them; only overlong ones are shortened.
 DUR_NOISE = 0.6   # syllable-timing variety (ESPnet's default 0.8 made pauses erratic)
 EDGE = 0.03       # s of silence kept at either end of a line
-AFTER = {"…": 0.55, "？": 0.5, "?": 0.5, "！？": 0.4, "!?": 0.4, "！": 0.32, "!": 0.32}  # else 0.45 (。)
+AFTER = {"…": 0.62, "？": 0.56, "?": 0.56, "！？": 0.45, "!?": 0.45, "！": 0.36, "!": 0.36}  # else 0.6 (。)
 UNITS = re.compile(r"(?<=[。！？!?])(?![。！？!?」』）)])|(?<=…)(?!…)")  # after 。！？ runs (not inside quotes) and after …
 
 
@@ -123,7 +123,7 @@ def split_units(text: str) -> list[str]:
 def pause_after(unit: str) -> float:
     end = re.search(r"[。！？!?…]+$", unit)
     end = end.group() if end else "。"
-    return AFTER.get("…" if end.endswith("…") else end[-2:], AFTER.get(end[-1], 0.45))
+    return AFTER.get("…" if end.endswith("…") else end[-2:], AFTER.get(end[-1], 0.6))
 
 
 def synthesize(text: str, speed: float, pause: float = 1.0) -> bytes:
@@ -176,8 +176,13 @@ class Handler(BaseHTTPRequestHandler):
             if not text:
                 return self._send(400, b'{"error": "empty text"}')
             self._send(200, synthesize(text, body.get("speed", 1.0), body.get("pause", 1.0)), "audio/wav")
+        except ConnectionError:  # the app stopped waiting (a newer line made this one stale): fine
+            pass
         except Exception as e:  # keep serving; report to the app
-            self._send(500, json.dumps({"error": f"{type(e).__name__}: {e}"}).encode())
+            try:
+                self._send(500, json.dumps({"error": f"{type(e).__name__}: {e}"}).encode())
+            except ConnectionError:
+                pass
 
     def log_message(self, *args):  # quiet: the app logs requests
         pass

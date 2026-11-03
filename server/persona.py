@@ -93,11 +93,13 @@ CALL = """
 - The user talks to you in {lang_name}. Understand whatever language they use.
 - Earlier messages in this conversation may use another subtitle language (the user can switch). Ignore that: your subtitles are ALWAYS in {lang_name} from now on, including greetings.
 - No emoji, markdown, lists or actions in asterisks. Stay in character; never mention being a language model, an API or a company — you are Makise Kurisu.
+- You can end the call yourself, the way a person hangs up: after you've both said goodbye, or when you've really had enough ("もう知らない！"). Never on a whim, and never in the middle of a real conversation.
 - {user_line}
 
 # Output format (strict)
 One line per sentence:
 emotion|Japanese|subtitle
+To hang up, end your reply with one more line that says only: hangup
 - emotion: one of {emotions}. Pick the strength that fits the moment: {emotion_guide}.
 - Japanese: exactly what you say out loud — natural colloquial Kurisu, the way she talks in the Japanese anime (〜わよ, 〜じゃない, 〜でしょ, 〜なの, べ、別に). Pure Japanese only: when you echo the user's own words, say them the Japanese way (傲娇 → ツンデレ, 害羞 → 照れる, 新的会话 → 新しい会話), never in Chinese characters Japanese doesn't use. Write foreign words in katakana; no Latin letters.
 - subtitle: that line in {lang_style}.
@@ -193,14 +195,14 @@ def _fields(user_name: str, language: str) -> tuple[str, dict]:
 
 
 def build_system_prompt(user_name: str, language: str = "en", context: str = "") -> str:
-    """The video call. context: what was said in the text chat lately (chat_context)."""
+    """The video call. context: her memory and the conversation so far (memory.context)."""
     language, f = _fields(user_name, language)
     return SYSTEM_PROMPT.format(**f, medium="a smartphone-style video call", lang_style=LANGUAGES[language]["style"],
                                 examples=EXAMPLES[language], context=context)
 
 
 def build_chat_prompt(user_name: str, language: str, stickers: str, context: str = "") -> str:
-    """The text chat. stickers: her sticker set as listed for the model; context: the last call."""
+    """The text chat. stickers: her sticker set as listed for the model; context: as for the call."""
     language, f = _fields(user_name, language)
     return CHAT_PROMPT.format(**f, medium="a messaging app on their phone", stickers=stickers,
                               lang_style=LANGUAGES[language]["chat_style"], examples=CHAT_EXAMPLES[language],
@@ -310,6 +312,27 @@ def chat_bubbles(content: str) -> list[dict]:
     return [m for m in map(parse_chat_line, content.splitlines()) if m]
 
 
+def is_hangup(line: str) -> bool:
+    """Her "I'm hanging up" line in a call reply."""
+    return bool(re.fullmatch(r"\W*hang\s*-?up\W*", line.strip(), re.I))
+
+
+def call_messages(run: list[dict]) -> list[dict]:
+    """Recent call turns as LLM messages, in the call's own line format."""
+    out = []
+    for m in run:
+        content = m["content"] if m["role"] == "user" else normalize_reply(m["content"])
+        if not content:
+            continue
+        if out and out[-1]["role"] == m["role"]:
+            out[-1]["content"] += "\n" + content
+        else:
+            out.append({"role": m["role"], "content": content})
+    while out and out[0]["role"] != "user":
+        out.pop(0)
+    return out
+
+
 def user_sticker(content: str) -> str | None:
     """The sticker id if the user's message was a sticker ("[sticker:id]"), else None."""
     m = re.fullmatch(r"\[sticker:(.+)\]", content.strip())
@@ -335,36 +358,3 @@ def chat_messages(thread: list[dict], meaning) -> list[dict]:
     while out and out[0]["role"] != "user":   # Anthropic wants a user turn first
         out.pop(0)
     return out
-
-
-def chat_context(thread: list[dict], meaning, n: int = 14) -> str:
-    """The latest text messages, for the call's prompt: she remembers what you texted."""
-    lines = []
-    for m in thread[-n:]:
-        if m["role"] == "user":
-            sid = user_sticker(m["content"])
-            lines.append("User: " + (f"[sticker: {meaning(sid)}]" if sid else m["content"]))
-            continue
-        for b in chat_bubbles(m["content"]):
-            lines.append("You: " + (b["text"] if b["kind"] == "text" else
-                                    f"[sticker: {meaning(b['name'])}]" if b["kind"] == "sticker" else
-                                    f"(voice message) {b['sub']}"))
-    lines = [line[:160] for line in lines[-n:]]
-    return ("\n\n# Recent text messages between you and the user (you remember them; for context only)\n"
-            + "\n".join(lines)) if lines else ""
-
-
-def call_context(history: list[dict], n: int = 12) -> str:
-    """The latest video call, for the chat's prompt."""
-    lines = []
-    for m in history[-n:]:
-        if m["role"] == "user":
-            if not is_connect_event(m["content"]):
-                lines.append("User: " + m["content"])
-            continue
-        subs = [s["sub"] for s in map(parse_line, m["content"].splitlines()) if s]
-        if subs:
-            lines.append("You: " + " ".join(subs))
-    lines = [line[:160] for line in lines[-n:]]
-    return ("\n\n# Earlier, on a video call with the user (you remember it; for context only)\n"
-            + "\n".join(lines)) if lines else ""

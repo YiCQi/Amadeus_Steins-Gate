@@ -3,6 +3,7 @@ import { setLang, t } from "./i18n.js";
 import { timeline } from "./lipsync.js";
 import { HandsFree } from "./call.js";
 import { Chat } from "./chat.js";
+import { MemoryPanel } from "./memory.js";
 
 const $ = s => document.querySelector(s);
 const avatar = await createAvatar($("#avatar"));  // mesh rig if one is built, else sprites
@@ -139,7 +140,7 @@ const PAUSE_MOOD = { thinking: 1.3, sad: 1.25, puzzled: 1.2, pout: 1.15, smug: 1
   laugh: 0.85, surprised: 0.85, annoyed: 0.8, angry: 0.75, furious: 0.65 };
 function linePause(prev, next) {
   const end = (prev.ja || "").trim(), start = (next.ja || "").trim();
-  let s = /[…‥]$|\.\.\.$/.test(end) ? 0.75 : /[？?]$/.test(end) ? 0.5 : /[！!]$/.test(end) ? 0.3 : 0.42;
+  let s = /[…‥]$|\.\.\.$/.test(end) ? 0.85 : /[？?]$/.test(end) ? 0.56 : /[！!]$/.test(end) ? 0.34 : 0.56;
   if (/^[…‥]|^\.\.\./.test(start)) s += 0.35;  // she hesitates before this one
   return s * (PAUSE_MOOD[next.emotion] ?? 1) * (0.85 + Math.random() * 0.3);
 }
@@ -179,7 +180,7 @@ async function converse({ message, event }) {
   // so audio can be ready before the subtitle is.
   const queue = makeQueue();
   const lines = new Map();
-  let current = null;
+  let current = null, hangup = false;
   const player = (async () => {
     let prev = null, prevEnd = 0;
     for await (const item of queue) {
@@ -253,6 +254,10 @@ async function converse({ message, event }) {
             item.resolveSub(data.sub);
             addLog({ role: "assistant", sub: data.sub, ja: item.ja });
           }
+        } else if (ev === "hangup") {
+          hangup = true;
+        } else if (ev === "mood") {
+          avatar.setMood?.(data.value);
         } else if (ev === "done") {
           Object.assign(timing, data.timing);
         } else if (ev === "error") {
@@ -270,6 +275,8 @@ async function converse({ message, event }) {
   }
   await player;
   if (gen === generation && timing.firstAudio) logTiming(timing);
+  // she said her last word and hung up: a beat of silence, then the line goes dead
+  if (hangup && gen === generation && connected) { await sleep(900); if (gen === generation) endCall("kurisu"); }
 }
 
 function logTiming(tm) {
@@ -475,34 +482,63 @@ $("#btn-test-voice").onclick = async () => {
   else $("#settings-msg").textContent = t("voiceFail");
 };
 
-$("#btn-reset").onclick = async () => {
-  if (!confirm(t("confirmReset"))) return;
-  await api("/api/reset", { method: "POST" });
-  $("#log-list").replaceChildren();
-  if (chat.loaded) chat.load();
-  $("#settings-msg").textContent = t("erased");
-};
+// her memory: there is no "erase everything", only forgetting (and restoring) single things
+const memoryPanel = new MemoryPanel({ api, toast });
+$("#btn-memories").onclick = () => { dlg.close(); memoryPanel.open(); };
 
-// ---------------------------------------------------------------- text chat
+// ---------------------------------------------------------------- text chat (the home screen)
 
 const chat = new Chat({
   api, toast,
   settings: () => settings,
-  onCall: () => { setMode("call"); if (!connected) $("#connect").click(); },
-  onBack: () => setMode("call"),   // the call, or the start screen if she hasn't been called yet
+  onCall: () => startCall(),
+  onSettings: () => { fillForm(); dlg.showModal(); },
+  onMemory: () => memoryPanel.open(),
+  onMood: v => avatar.setMood?.(v),
 });
 
 function setMode(mode) {
   $("#phone").dataset.mode = mode;
-  if (mode === "chat") {
-    stopSpeaking();
-    if (call.active) callBtn.click();   // a hands-free call would hear you typing
-    chat.open();
-  }
+  if (mode === "chat") chat.open();
 }
 
 $("#open-chat").onclick = () => setMode("chat");
-$("#btn-chat").onclick = () => setMode("chat");
+
+// ---------------------------------------------------------------- the call: from the chat, back to it
+
+let callStart = 0;
+
+function startCall() {
+  setMode("call");
+  if (!connected) $("#connect").click();
+}
+
+// by: "user" (the hang-up button) or "kurisu" (she hung up). The call goes into the chat as a record.
+async function endCall(by) {
+  if (!connected) { setMode("chat"); return; }
+  connected = false;
+  greeted = false;
+  stopSpeaking();
+  if (call.active) { call.stop(); callBtn.classList.remove("live", "hearing"); mic.disabled = false; }
+  hideSubtitle();
+  setStatus("offline");
+  const seconds = (Date.now() - callStart) / 1000;
+  toast(t(by === "kurisu" ? "herHangup" : "callEnded"), 2500);
+  let rec = { role: "event", kind: "call", seconds, by, ts: Date.now() };
+  try {
+    rec = await (await api("/api/call/end", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ seconds, by }) })).json();
+  } catch {}
+  await sleep(by === "kurisu" ? 1200 : 400);
+  // ready for the next call, then back to the chat
+  $("#boot").classList.remove("gone");
+  $("#boot-log").textContent = "";
+  $("#connect").disabled = false;
+  $("#avatar").classList.remove("on");
+  setMode("chat");
+  if (chat.loaded) chat.render(rec);
+}
+
+$("#btn-hangup").onclick = () => endCall("user");
 
 // Preview the UI language as soon as it's picked; Cancel restores the saved one.
 form.elements.language.onchange = e => setLang(e.target.value);
@@ -537,11 +573,10 @@ function startRain() {
   draw();
 }
 
-// ---------------------------------------------------------------- clock
+// ---------------------------------------------------------------- clock: how long this call has lasted
 
-const t0 = Date.now();
 setInterval(() => {
-  const s = Math.floor((Date.now() - t0) / 1000);
+  const s = connected ? Math.floor((Date.now() - callStart) / 1000) : 0;
   $("#clock").textContent = `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }, 1000);
 
@@ -567,9 +602,11 @@ $("#connect").onclick = async () => {
     "> Amadeus system online.",
   ]);
   $("#boot").classList.add("gone");
+  if (st.mood != null) avatar.setMood?.(st.mood);
   avatar.show();
   setStatus(st.tts_enabled === undefined ? "offline" : "online");
   connected = true;
+  callStart = Date.now();
   if (!settings.model) {
     toast(t("needApi"), 6000);
     fillForm();
@@ -590,6 +627,7 @@ function greet() {
   try {
     settings = await (await api("/api/settings")).json();
     applySettings();
+    setMode("chat");   // the chat is home; the video call starts from there
     const hist = await (await api("/api/history")).json();
     hist.forEach(addLog);
   } catch (e) {

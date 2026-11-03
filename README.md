@@ -7,7 +7,8 @@ A personal recreation of **Amadeus** from *Steins;Gate 0*: the AI built from Mak
 - **Subtitles / conversation**: English or 简体中文 (Settings → Subtitle language). Her voice stays Japanese either way. In Chinese mode, the interface, subtitles, the conversation log, and mic recognition all switch to Chinese.
 - **Ears**: type, or press the mic button (local Whisper, or the browser's speech recognition)
 - **Face**: a 2D mesh rig built from the portrait (Live2D-style: head turns with depth, eyelids, gaze, brows, drawn mouth for lip-sync, blush, swinging hair, breathing, 15 expressions in several strengths), with the original layered sprites as a fallback
-- **Text chat**: a WeChat-style chat beside the call, where she texts in your language, sends her own stickers, and now and then a Japanese voice message
+- **Text chat**: the home screen, a messaging app in the Amadeus terminal's style: she texts in your language, sends her own stickers, and now and then a Japanese voice message. Video calls start from there, and end up in the chat as call records
+- **Memory**: one memory for calls and chats, kept like a person's: it knows the time, fades, comes back when something reminds her, and forgets only what you ask it to (see below)
 
 ```
 browser (web/)                   Amadeus server (server/, :8710)          external
@@ -28,7 +29,7 @@ The model replies one sentence per line as `emotion|English|Japanese`. Each sent
 
 1. Install **Python 3.11+** (3.14 works).
 2. Double-click **`start.bat`**. The first run creates a virtual environment in `%LOCALAPPDATA%\Amadeus\venv` and installs the dependencies. (It lives outside this folder because the `;` in `Amadeus_Steins;Gate` breaks Python venvs.)
-3. Your browser opens at <http://127.0.0.1:8710>. Click **Connect**, then fill in **Settings** (⚙):
+3. Your browser opens the chat at <http://127.0.0.1:8710>. Fill in **Settings** (⚙, top left), then text her, or press the camera button for a video call:
 
 | Provider | Provider setting | Base URL | Example model |
 |---|---|---|---|
@@ -51,11 +52,22 @@ The model replies one sentence per line as `emotion|English|Japanese`. Each sent
 
 Your API key is stored in plain text in `data/settings.json` on this PC.
 
-### Text chat
+### Text chat and calls
 
-Click **Message** on the start screen (or the speech-bubble button during a call) for a WeChat-style chat. She texts in your subtitle language, sends stickers, and now and then a short Japanese voice message (tap it to play; the translation is under it). The chat and the call remember each other: when you call, she knows what you texted, and the other way round. **Settings → Erase memory** clears both.
+The app opens on the chat. She texts in your subtitle language, sends stickers, and now and then a short Japanese voice message (tap it to play; the translation is under it). The camera button calls her; the red button hangs up, and she can hang up on you too: after saying goodbye, or when she's had enough. Each call ends up in the chat as a record with its length.
 
 **Stickers** are the images in `web/assets/stickers/`. To add your own, drop a png, gif, webp or jpg there and add a line to `stickers.txt` saying when to send it (`无语.png = 无语，对方说了很蠢的话`). Without a line, the file name is its meaning. She picks stickers by those meanings, and you can send any of them with the 😊 button. Her starter set of 21 animated stickers was rendered from her own rig.
+
+### Her memory
+
+Calls and chats share one memory (`server/memory.py`, kept in `data/memory/`), modelled on a person's rather than a chat log:
+
+- **Everything is kept, with times** (`log.jsonl`, the archive). She knows what time it is and how long it has been since you last talked, so she can tell a late-night call from a morning one.
+- **Recent conversation** (since she last sorted her memories) is what she reads word for word, calls and chats together: when you call, she knows what you texted.
+- **Older conversation becomes memories.** When the recent part grows long, or a conversation has been over for an hour, she sorts its oldest stretch into an episode: a dated gist in her own words, how much it mattered, how she felt, and the facts she learned about you. This is one extra request to your AI API, in the background.
+- **Memories fade, and come back.** Each one weakens over days to weeks (important ones last longer), and every time it comes up again it lasts longer still. Faded memories are deep memories: she only gets them back when something strongly reminds her of them, and only vaguely. She is shown just what the moment reminds her of, so long histories never overflow the model.
+- **Mood.** She carries a mood from 0 (bad) to 1 (great) from one conversation to the next. It moves with how each exchange felt to her, drifts back to her usual self over a few hours, colours what she says, and shows on her face (a good mood lifts the corners of her mouth).
+- **Forgetting is selective.** The brain button in the chat (or **Settings → Her memory…**) shows what she knows about you, what she remembers and how clearly, and her mood. You can make her forget a single memory, a single fact, or the conversation not yet sorted. Nothing is destroyed: forgotten things are sealed and can be restored from the same panel. There is no "erase everything" button.
 
 ---
 
@@ -198,7 +210,8 @@ The included closed-eyes and closed-mouth overlays were generated from the portr
 start.bat / run.py        launcher
 config.example.toml       copy → config.toml (start.bat does this)
 server/
-  main.py                 FastAPI routes, history, SSE streaming (call and text chat)
+  main.py                 FastAPI routes, SSE streaming (call and text chat)
+  memory.py               her memory: timeline, consolidation, recall, fading, forgetting, mood
   persona.py              Kurisu system prompts (call, chat) + reply parsers
   stickers.py             her sticker set: web/assets/stickers/ + stickers.txt
   llm.py                  OpenAI-compatible & Anthropic streaming
@@ -208,7 +221,8 @@ server/
   stt.py                  faster-whisper
 web/                      UI (no build step)
   app.js style.css index.html
-  chat.js                 the text chat
+  chat.js                 the text chat (the home screen)
+  memory.js               the memory panel
   rig.js                  mesh rig renderer (WebGL) and motion
   lipsync.js              kana reading + audio -> mouth shape timeline
   call.js                 hands-free call: voice activity detection, barge-in
@@ -217,7 +231,7 @@ web/                      UI (no build step)
   assets/stickers/        her stickers (add your own here) + stickers.txt
 art/kurisu/               rig sources: cleaned portrait, See-through PSDs
 voice/refs/               your reference clips
-data/                     settings.json; her memory: history.json (call), chat.json + voice/ (text chat)
+data/                     settings.json; memory/ (her memory: log, episodes, facts, mood); voice/ (her voice messages)
 tools/
   make_rig.bat            portrait -> See-through -> rig
   psd_to_rig.py           See-through PSD -> web/assets/kurisu/rig/
@@ -227,7 +241,7 @@ tools/
   make_overlays.py        blink / lip-sync overlays for the sprites
 ```
 
-**Erase memory** in Settings clears `data/history.json`, `data/chat.json` and her voice messages.
+To give her a completely fresh start, close the app and delete `data/memory/` (her voice messages are in `data/voice/`).
 
 ## Troubleshooting
 

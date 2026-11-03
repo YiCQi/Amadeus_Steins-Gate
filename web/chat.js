@@ -29,9 +29,9 @@ async function* sseEvents(r) {
 
 export class Chat {
   // api(path, opts) -> Response, toast(msg, ms), settings() -> current settings,
-  // onCall(): start / go back to the video call, onBack(): leave the chat
-  constructor({ api, toast, settings, onCall, onBack }) {
-    Object.assign(this, { api, toast, settings, onCall, onBack });
+  // onCall(): start a video call, onSettings(), onMemory(): open those, onMood(v): her mood changed
+  constructor({ api, toast, settings, onCall, onSettings, onMemory, onMood }) {
+    Object.assign(this, { api, toast, settings, onCall, onMood });
     this.list = $("#chat-list");
     this.input = $("#chat-input");
     this.status = $("#chat-status");
@@ -50,7 +50,8 @@ export class Chat {
     this.input.addEventListener("input", () => this.fit());
     $("#chat-sticker").onclick = () => this.togglePanel();
     $("#chat-call").onclick = () => onCall();
-    $("#chat-back").onclick = () => onBack();
+    $("#chat-settings").onclick = () => onSettings();
+    $("#chat-memory").onclick = () => onMemory();
     $("#chat-mic").onclick = () => this.mic();
     this.list.addEventListener("click", () => { this.panel.hidden = true; });
   }
@@ -98,6 +99,7 @@ export class Chat {
   render(m) {
     this.stamp(m.ts);
     const li = document.createElement("li");
+    if (m.role === "event") return this.record(li, m);
     li.className = "msg " + (m.role === "user" ? "me" : "her");
     if (m.role !== "user") {
       const ava = Object.assign(new Image(), { src: AVATAR, alt: "", className: "ava" });
@@ -118,6 +120,22 @@ export class Chat {
       b.textContent = m.text;
       li.append(b);
     }
+    this.list.append(li);
+    this.scroll();
+    return li;
+  }
+
+  // A finished video call, like a messaging app's call record: on your side, since you called.
+  record(li, m) {
+    li.className = "msg me";
+    const b = document.createElement("div");
+    b.className = "bubble call-record";
+    const secs = Math.round(m.seconds || 0);
+    const len = `${String(Math.floor(secs / 60)).padStart(2, "0")}:${String(secs % 60).padStart(2, "0")}`;
+    b.innerHTML = `<svg viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>`;
+    b.append(secs < 2 ? t("callCancelled") : t("callRecord", len));
+    if (m.by === "kurisu" && secs >= 2) b.append(Object.assign(document.createElement("small"), { textContent: t("callHerHung") }));
+    li.append(b);
     this.list.append(li);
     this.scroll();
     return li;
@@ -212,6 +230,8 @@ export class Chat {
           if (wait > 0) await sleep(wait);
           this.render({ role: "assistant", ts: Date.now(), ...data });
           shown++;
+        } else if (event === "mood") {
+          this.onMood?.(data.value);
         } else if (event === "error") {
           throw new Error(data.message);
         }
