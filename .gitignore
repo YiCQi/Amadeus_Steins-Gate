@@ -1,0 +1,8 @@
+config.toml
+data/
+voice/refs/*
+!voice/refs/.gitkeep
+__pycache__/
+art/*/*.psd
+art/*/*.psd.json
+art/review/

@@ -1,0 +1,21 @@
+{
+  "width": 834,
+  "height": 1260,
+  "default": "neutral",
+  "expressions": {
+    "neutral": {
+      "base": "neutral.webp",
+      "eyes_closed": "eyes_closed.png",
+      "mouth_closed": "mouth_closed.png"
+    }
+  },
+  "aliases": {
+    "happy": "neutral",
+    "annoyed": "neutral",
+    "embarrassed": "neutral",
+    "sad": "neutral",
+    "surprised": "neutral",
+    "thinking": "neutral",
+    "smug": "neutral"
+  }
+}

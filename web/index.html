@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <title>Amadeus</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Share+Tech+Mono&family=Noto+Sans:wght@500;600&family=Noto+Sans+JP:wght@500&family=Noto+Sans+SC:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="phone">
+    <section id="screen">
+      <div id="avatar"></div>
+      <canvas id="rain"></canvas>
+      <div class="crt"></div>
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+
+      <header id="hud">
+        <div class="logo">Amadeus</div>
+        <div class="hud-right">
+          <span id="status" data-state="offline">OFFLINE</span>
+          <span id="clock">00:00</span>
+        </div>
+      </header>
+
+      <div id="subtitle" aria-live="polite">
+        <p id="sub-text"></p>
+        <p id="sub-ja" lang="ja"></p>
+      </div>
+
+      <div id="toast" role="status"></div>
+
+      <div id="boot">
+        <div class="boot-logo">Amadeus</div>
+        <div class="boot-sub" data-i18n="uni">Viktor Chondria University<br>Brain Science Institute</div>
+        <pre id="boot-log"></pre>
+        <button id="connect" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1A17 17 0 0 1 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1l-2.3 2.2z"/></svg>
+          <span data-i18n="connect">Connect</span>
+        </button>
+      </div>
+    </section>
+
+    <form id="bar" autocomplete="off">
+      <button type="button" id="btn-log" class="icon" data-i18n-title="log" title="Conversation log" aria-label="Conversation log">
+        <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      </button>
+      <input id="input" data-i18n-ph="placeholder" placeholder="Talk to Kurisu…" enterkeyhint="send">
+      <button type="button" id="btn-mic" class="icon" data-i18n-title="mic" title="Speak (click to start / stop)" aria-label="Microphone">
+        <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+      </button>
+      <button type="button" id="btn-call" class="icon" data-i18n-title="call" title="Hands-free call" aria-label="Hands-free call">
+        <svg viewBox="0 0 24 24"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/></svg>
+      </button>
+      <button type="submit" id="btn-send" class="icon accent" data-i18n-title="send" title="Send" aria-label="Send">
+        <svg viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-2.5-6.5z"/></svg>
+      </button>
+      <button type="button" id="btn-settings" class="icon" data-i18n-title="settings" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
+    </form>
+  </main>
+
+  <aside id="log" hidden>
+    <header><span>LOG</span><button type="button" id="log-close" class="icon" aria-label="Close log"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+    <ol id="log-list"></ol>
+  </aside>
+
+  <dialog id="settings">
+    <form method="dialog" id="settings-form">
+      <h2 data-i18n="set.title">Amadeus settings</h2>
+
+      <fieldset>
+        <legend data-i18n="set.api">AI API</legend>
+        <label><span data-i18n="set.provider">Provider</span>
+          <select name="provider">
+            <option value="openai" data-i18n="set.openai">OpenAI-compatible (OpenAI, DeepSeek, Ollama…)</option>
+            <option value="anthropic">Anthropic</option>
+          </select>
+        </label>
+        <label><span data-i18n="set.base">Base URL</span> <input name="base_url" placeholder="https://api.openai.com/v1"></label>
+        <label><span data-i18n="set.key">API key</span> <input name="api_key" type="password" placeholder="sk-…"></label>
+        <label><span data-i18n="set.model">Model</span> <input name="model" placeholder="e.g. gpt-4o, deepseek-chat, claude-sonnet-5-5"></label>
+        <label><span data-i18n="set.temp">Temperature</span> <input name="temperature" type="number" min="0" max="2" step="0.1"></label>
+        <label><span data-i18n="set.effort">Reasoning effort (only for "thinking" models)</span>
+          <select name="reasoning_effort">
+            <option value="" data-i18n="set.effortDefault">Default (not sent)</option>
+            <option value="low" data-i18n="set.effortLow">low — answers fastest</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend data-i18n="set.you">You</legend>
+        <label><span data-i18n="set.lang">Subtitle language (voice stays Japanese)</span>
+          <select name="language">
+            <option value="en">English</option>
+            <option value="zh">简体中文</option>
+          </select>
+        </label>
+        <label><span data-i18n="set.name">Your name</span> <input name="user_name" data-i18n-ph="set.namePh" placeholder="What Kurisu calls you"></label>
+        <label><span data-i18n="set.mic">Microphone</span>
+          <select name="stt_mode">
+            <option value="local" data-i18n="set.micLocal">Local Whisper (GPU, private)</option>
+            <option value="browser" data-i18n="set.micBrowser">Browser speech recognition (Chrome / Edge)</option>
+          </select>
+        </label>
+        <label class="check"><input name="show_japanese" type="checkbox"> <span data-i18n="set.showJa">Show Japanese line under subtitles</span></label>
+      </fieldset>
+
+      <p id="settings-msg" class="muted"></p>
+
+      <div class="row">
+        <button type="button" id="btn-test-voice" data-i18n="set.test">Test voice</button>
+        <button type="button" id="btn-reset" class="danger" data-i18n="set.reset">Erase memory</button>
+        <span class="spacer"></span>
+        <button value="cancel" formnovalidate data-i18n="set.cancel">Cancel</button>
+        <button type="submit" value="save" class="primary" data-i18n="set.save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

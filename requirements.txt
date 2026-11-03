@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+httpx
+python-multipart
+faster-whisper
+edge-tts
+pillow
+psd-tools
+pykakasi
