@@ -171,6 +171,87 @@ def match_source(parts, size, source):
         comp[cwin] += (vis * a)[..., None] * rgb
 
 
+def on_canvas(p, size):
+    """A part's premultiplied colour and its alpha, placed on the rig canvas."""
+    W, H = size
+    col, al = np.zeros((H, W, 3), np.float32), np.zeros((H, W), np.float32)
+    h, w = p.rgba.shape[:2]
+    cx0, cy0, cx1, cy1 = max(0, p.x), max(0, p.y), min(W, p.x + w), min(H, p.y + h)
+    if cx1 > cx0 and cy1 > cy0:
+        win = p.rgba[cy0 - p.y: cy1 - p.y, cx0 - p.x: cx1 - p.x].astype(np.float32) / 255
+        al[cy0:cy1, cx0:cx1] = win[..., 3]
+        col[cy0:cy1, cx0:cx1] = win[..., :3] * win[..., 3:] * 255
+    return col, al
+
+
+def stack(parts, size):
+    """Premultiplied colour and coverage of `parts` drawn bottom to top."""
+    W, H = size
+    C, A = np.zeros((H, W, 3), np.float32), np.zeros((H, W), np.float32)
+    for p in parts:
+        c, a = on_canvas(p, size)
+        C = c + C * (1 - a)[..., None]
+        A = a + A * (1 - a)
+    return C, A
+
+
+def open_neck(parts, size, source, eye_y, orig):
+    """Clear what lies under the chin, so a turned or raised head shows the neck there.
+
+    The chin hides the top of the neck. See-through filled the shirt layer there (it is
+    drawn over the neck, for the collar) with a patch of back collar, and match_source
+    painted the jaw's outline onto whatever lies under the face's soft edge. A moving head
+    uncovered both, as a pale band with a dark crack under the chin. So under the face the
+    shirt is cut away where the neck is, the neck gets its own unpainted colours back, and
+    the jaw's outline moves into the face's own soft edge, which travels with the head."""
+    face, neck, shirt = find(parts, "face"), find(parts, "neck"), find(parts, "topwear")
+    if face is None or neck is None or source is None:
+        return
+    W, H = size
+    _, FA = on_canvas(face, size)
+    _, NA = on_canvas(neck, size)
+    under = FA > 0.02
+
+    def window(p):
+        h, w = p.rgba.shape[:2]
+        cx0, cy0, cx1, cy1 = max(0, p.x), max(0, p.y), min(W, p.x + w), min(H, p.y + h)
+        return (slice(cy0 - p.y, cy1 - p.y), slice(cx0 - p.x, cx1 - p.x)), (slice(cy0, cy1), slice(cx0, cx1))
+
+    if shirt is not None:
+        win, cwin = window(shirt)
+        cut = under[cwin] & (NA[cwin] > 0.5)
+        shirt.rgba[win][..., 3][cut] = 0
+    if id(neck) in orig:
+        win, cwin = window(neck)
+        m = under[cwin]
+        neck.rgba[win][..., :3][m] = orig[id(neck)][win][..., :3][m]
+    i = parts.index(face)
+    Cb, _ = stack(parts[:i], size)
+    Ca, Aa = stack(parts[i + 1:], size)
+    src = np.asarray(Image.open(source).convert("RGB").resize(size, Image.LANCZOS)).astype(np.float32)
+    vis = 1 - Aa
+    rows = np.arange(H)[:, None]
+    edge = under & (FA < 0.98) & (vis > 0.6) & (rows > eye_y)
+    # what the face and everything under it must add up to, minus what lies under the face
+    want = (src - Ca) / np.maximum(vis, 1e-3)[..., None]
+    rgb = np.clip((want - (1 - FA)[..., None] * Cb) / np.maximum(FA, 1e-3)[..., None], 0, 255)
+    win, cwin = window(face)
+    band, fa = edge[cwin], FA[cwin]
+    # dividing by a faint alpha turns the source's noise into speckles: solve where the edge
+    # is fairly opaque, give the faint rim the colour next to it, then smooth along the band
+    solve, faint = band & (fa >= 0.3), band & (fa < 0.3)
+    fr = face.rgba[win][..., :3].astype(np.float32)
+    fr[solve] = rgb[cwin][solve]
+    fr = bleed(fr, solve, faint, steps=4)
+    p = np.pad(fr, ((1, 1), (1, 1), (0, 0)), mode="edge")
+    med = np.median(np.stack([p[1 + dy: p.shape[0] - 1 + dy, 1 + dx: p.shape[1] - 1 + dx]
+                              for dy in (-1, 0, 1) for dx in (-1, 0, 1)]), axis=0)
+    fr[band] = med[band]
+    face.rgba[win][..., :3][band] = np.clip(fr[band], 0, 255).astype(np.uint8)
+    print(f"  neck: cleared {int(cut.sum()) if shirt is not None else 0} px of shirt under the chin, "
+          f"jaw outline moved into {int(band.sum())} px of the face's edge")
+
+
 def bleed(rgb, solid, todo, steps=3):
     """Grow `solid` pixels' colour into `todo` pixels, one ring per step."""
     rgb, solid = rgb.copy(), solid.copy()
@@ -714,26 +795,37 @@ def build(psd_path, source, out_dir, depth_path=None):
         print("depth: maps are flat within each part, using the head-shaped model")
     # yaw/pitch pivot depth: the head model's axis, or behind the face for measured depth
     head["head"]["pivotZ"] = 0.0 if scale is None else round(-0.36 * head["head"]["headW"], 1)
+    orig = {id(p): p.rgba.copy() for p in parts if p.tag == "neck"}
     if source is not None:
         match_source(parts, size, source)
     tint_hidden(parts, size)
     repaint_under(parts)
     complete_irides(parts)
+    open_neck(parts, size, source, head["head"]["eyeY"], orig)
     for p in parts:
         edge_extend(p, (0, 0, size[0], size[1]))
     out_dir.mkdir(parents=True, exist_ok=True)
     for old in out_dir.glob("*.webp"):
         old.unlink()
 
-    rig_parts, preview = [], Image.new("RGBA", size, (0, 0, 0, 0))
+    rig_parts, preview, whites = [], Image.new("RGBA", size, (0, 0, 0, 0)), {}
     for p in parts:
         cols, rows = grid_size(p)
         z = part_z(p, cols, rows, head["head"], scale)
         fname = p.name.replace(" ", "_") + ".webp"
         img = Image.fromarray(p.rgba, "RGBA")
         img.save(out_dir / fname, "WEBP", lossless=True, quality=100, method=6)
+        shown = img
+        if p.tag == "eyewhite":
+            whites[p.side] = on_canvas(p, size)[1] > 0.3
+        elif p.tag == "irides" and p.side in whites:   # as in the app, each iris shows only on its eye white
+            h, w = p.rgba.shape[:2]
+            m = np.zeros((h, w), bool)
+            x0, y0, x1, y1 = max(0, p.x), max(0, p.y), min(size[0], p.x + w), min(size[1], p.y + h)
+            m[y0 - p.y: y1 - p.y, x0 - p.x: x1 - p.x] = whites[p.side][y0:y1, x0:x1]
+            shown = Image.fromarray(np.dstack([p.rgba[..., :3], p.rgba[..., 3] * m]).astype(np.uint8), "RGBA")
         cx0, cy0 = max(0, -p.x), max(0, -p.y)   # parts may hang off the frame (edge padding)
-        preview.alpha_composite(img.crop((cx0, cy0, img.width, img.height)), (p.x + cx0, p.y + cy0))
+        preview.alpha_composite(shown.crop((cx0, cy0, img.width, img.height)), (p.x + cx0, p.y + cy0))
         rig_parts.append({
             "name": p.name, "tag": p.tag, "side": p.side, "file": fname,
             "rect": [int(p.x), int(p.y), int(p.rgba.shape[1]), int(p.rgba.shape[0])],

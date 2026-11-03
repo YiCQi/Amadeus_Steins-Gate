@@ -6,7 +6,8 @@ A personal recreation of **Amadeus** from *Steins;Gate 0*: the AI built from Mak
 - **Voice**: Japanese, cloned locally with [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) on your GPU
 - **Subtitles / conversation**: English or 简体中文 (Settings → Subtitle language). Her voice stays Japanese either way. In Chinese mode, the interface, subtitles, the conversation log, and mic recognition all switch to Chinese.
 - **Ears**: type, or press the mic button (local Whisper, or the browser's speech recognition)
-- **Face**: a 2D mesh rig built from the portrait (Live2D-style: head turns with depth, eyelids, gaze, brows, drawn mouth for lip-sync, blush, hair swing, breathing), with the original layered sprites as a fallback
+- **Face**: a 2D mesh rig built from the portrait (Live2D-style: head turns with depth, eyelids, gaze, brows, drawn mouth for lip-sync, blush, swinging hair, breathing, 15 expressions in several strengths), with the original layered sprites as a fallback
+- **Text chat**: a WeChat-style chat beside the call, where she texts in your language, sends her own stickers, and now and then a Japanese voice message
 
 ```
 browser (web/)                   Amadeus server (server/, :8710)          external
@@ -49,6 +50,12 @@ The model replies one sentence per line as `emotion|English|Japanese`. Each sent
 > The model has to write natural Japanese **and** follow the line format. Stronger models (GPT-4o class, Claude Sonnet, DeepSeek-V3, Qwen2.5-14B+) are noticeably better at this than small ones.
 
 Your API key is stored in plain text in `data/settings.json` on this PC.
+
+### Text chat
+
+Click **Message** on the start screen (or the speech-bubble button during a call) for a WeChat-style chat. She texts in your subtitle language, sends stickers, and now and then a short Japanese voice message (tap it to play; the translation is under it). The chat and the call remember each other: when you call, she knows what you texted, and the other way round. **Settings → Erase memory** clears both.
+
+**Stickers** are the images in `web/assets/stickers/`. To add your own, drop a png, gif, webp or jpg there and add a line to `stickers.txt` saying when to send it (`无语.png = 无语，对方说了很蠢的话`). Without a line, the file name is its meaning. She picks stickers by those meanings, and you can send any of them with the 😊 button. Her starter set of 21 animated stickers was rendered from her own rig.
 
 ---
 
@@ -114,7 +121,7 @@ audio = "voice/refs/embarrassed.wav"
 text  = "べ、別にそういうわけじゃ…"
 ```
 
-Emotions: `neutral happy annoyed embarrassed sad surprised thinking smug`. Any emotion without a clip falls back to `neutral`.
+Emotions: `neutral smile happy laugh smug annoyed angry furious pout disgusted embarrassed sad surprised puzzled thinking`. Any emotion without a clip falls back to `neutral`.
 
 > **Please keep it private.** Kurisu's voice belongs to her voice actress, Asami Imai, and the rights holders. Use it for personal use only, and don't share the trained model, the clips, or recordings of the clone.
 
@@ -141,7 +148,8 @@ The page uses the **mesh rig** in `web/assets/kurisu/rig/` when it exists (and W
 - **Head**: yaw, pitch and roll. Every vertex has a depth, so the nose and bangs move more than the cheeks, and back hair moves the other way. The face's outline sits further back than its middle, so a turned face keeps its shape instead of sliding sideways.
 - **Eyes**: the eyelids close along the shape of each eye, the eye smile (^^) raises the lower lid, and the irises look around (clipped to the eye white). The converter paints in the top of each iris that the lid hides, so a wide-open, surprised eye shows a whole iris.
 - **Brows, mouth, blush**: the mouth is drawn per frame at the portrait's own resolution, with soft lines that thin toward the corners like the art (closed line ↔ open with teeth and tongue, smile/frown, smirk). Lip-sync takes each mora's shape (a/i/u/e/o, ん, っ) from the line's kana reading, spread over the voiced parts of the audio; loudness only decides how far it opens.
-- **Body**: hair swings behind head turns, breathing, idle sway, and one pose per emotion.
+- **Expressions**: 15, some in strengths (smile < happy < laugh, annoyed < angry < furious), plus sulking with puffed cheeks and mumbling, puzzled with one brow up and a squint, the half-lidded disgusted stare. Some move on their own: laughing shakes her, fury trembles.
+- **Body**: the two side locks and the bangs swing on their own springs behind head turns and in a light breeze, breathing, idle sway.
 
 Only building a rig needs See-through; the rig itself is a few images and a JSON file that run in any browser, phones included.
 
@@ -190,8 +198,9 @@ The included closed-eyes and closed-mouth overlays were generated from the portr
 start.bat / run.py        launcher
 config.example.toml       copy → config.toml (start.bat does this)
 server/
-  main.py                 FastAPI routes, history, SSE streaming
-  persona.py              Kurisu system prompt + line parser
+  main.py                 FastAPI routes, history, SSE streaming (call and text chat)
+  persona.py              Kurisu system prompts (call, chat) + reply parsers
+  stickers.py             her sticker set: web/assets/stickers/ + stickers.txt
   llm.py                  OpenAI-compatible & Anthropic streaming
   tts.py                  voices: GPT-SoVITS, Amadeus VITS, edge-tts (+ cache)
   vits_server.py          the Amadeus voice service (runs in its own Python 3.12 venv)
@@ -199,14 +208,16 @@ server/
   stt.py                  faster-whisper
 web/                      UI (no build step)
   app.js style.css index.html
+  chat.js                 the text chat
   rig.js                  mesh rig renderer (WebGL) and motion
   lipsync.js              kana reading + audio -> mouth shape timeline
   call.js                 hands-free call: voice activity detection, barge-in
   avatar.js               sprite avatar (fallback)
   assets/kurisu/          sprites; rig/ = the built rig
+  assets/stickers/        her stickers (add your own here) + stickers.txt
 art/kurisu/               rig sources: cleaned portrait, See-through PSDs
 voice/refs/               your reference clips
-data/                     settings.json, history.json (her memory)
+data/                     settings.json; her memory: history.json (call), chat.json + voice/ (text chat)
 tools/
   make_rig.bat            portrait -> See-through -> rig
   psd_to_rig.py           See-through PSD -> web/assets/kurisu/rig/
@@ -216,7 +227,7 @@ tools/
   make_overlays.py        blink / lip-sync overlays for the sprites
 ```
 
-**Erase memory** in Settings clears `data/history.json`.
+**Erase memory** in Settings clears `data/history.json`, `data/chat.json` and her voice messages.
 
 ## Troubleshooting
 

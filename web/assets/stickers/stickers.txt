@@ -1,0 +1,31 @@
+# 红莉栖的表情包：每行一个，格式是「文件名 = 什么时候发」。
+# 等号后面的说明是给语言模型看的，写清楚这张表情的意思、适合什么场合，她就会在合适的时候发。
+# 想加新表情：把图片（png / gif / webp / jpg）放进这个文件夹，再在下面加一行。
+# 不写说明也行，那样文件名本身就是它的意思（比如「无语.png」）。
+# 以 # 开头的行是注释。改完不用重启，下一条消息就生效。
+#
+# Kurisu's stickers: one per line, "file = when to send it". The text after = is for the
+# language model. To add one, drop an image (png / gif / webp / jpg) into this folder and
+# add a line here; without a line, the file name is its meaning. No restart needed.
+
+hentai.webp = 骂对方变态，一脸嫌弃（对方说了下流或奇怪的话）
+ha.webp = は？——不可理喻，你在说什么
+fun.webp = 哼！闹别扭，扭头不理你
+betsuni.webp = 傲娇否认：“才、才不是呢”（被说中心事、被夸的时候）
+doya.webp = 得意洋洋，炫耀自己有多聪明（ドヤ顔）
+naruhodo.webp = 原来如此，认真思考，被说服了
+eh.webp = 诶？！吃惊，难以置信
+ahaha.webp = 哈哈大笑
+tina.webp = 不许叫我克里斯蒂娜 / “蒂娜”！（被乱起外号）
+muu.webp = 鼓着脸郁闷，不高兴，有点委屈
+mugon.webp = 无语……（对方说了很蠢或很尴尬的话）
+baka.webp = 笨蛋！（又气又害羞）
+hatena.webp = 疑问，困惑，没听懂
+tereteru.webp = 害羞但嘴硬：“我才没有害羞”
+shobon.webp = 难过，失落，沮丧
+mukatsuku.webp = 真的生气了，火大
+fufu.webp = 开心地偷笑，很满意
+ryoukai.webp = 了解，好的，收到
+elpsy.webp = El Psy Kongroo，中二暗号（调侃对方中二，或者当作告别）
+oyasumi.webp = 晚安，困了
+drpepper.webp = Dr Pepper 最高！（聊到饮料，或者心情很好）

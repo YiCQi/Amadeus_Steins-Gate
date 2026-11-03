@@ -9,7 +9,9 @@ CONFIG_PATH = ROOT / "config.toml"
 EXAMPLE_PATH = ROOT / "config.example.toml"
 DATA_DIR = Path(os.environ.get("AMADEUS_DATA", ROOT / "data"))  # override for a separate profile/test run
 SETTINGS_PATH = DATA_DIR / "settings.json"
-HISTORY_PATH = DATA_DIR / "history.json"
+HISTORY_PATH = DATA_DIR / "history.json"   # the video call
+CHAT_PATH = DATA_DIR / "chat.json"         # the text chat
+VOICE_DIR = DATA_DIR / "voice"             # her voice messages in the text chat
 
 # Keys the UI may change. Everything else lives in config.toml.
 UI_KEYS = {

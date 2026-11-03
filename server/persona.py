@@ -1,14 +1,26 @@
-"""Kurisu / Amadeus persona and the reply format the front-end depends on.
+"""Kurisu / Amadeus persona and the reply formats the front-end depends on.
 
-Reply format, one line per sentence:   emotion|Japanese|subtitle
+Video call, one line per sentence:   emotion|Japanese|subtitle
 
 Japanese comes first: it is what she actually says (and what gets voiced), so the
 server can start synthesising a line before its subtitle has even been written, and
 the subtitle reads as a translation of her words, like real anime subtitles.
+
+Text chat, one bubble per line:      text|emotion|message
+                                     sticker|name
+                                     voice|emotion|Japanese|translation
 """
 import re
 
-EMOTIONS = ["neutral", "happy", "annoyed", "embarrassed", "sad", "surprised", "thinking", "smug"]
+EMOTIONS = ["neutral", "smile", "happy", "laugh", "smug", "annoyed", "angry", "furious",
+            "pout", "disgusted", "embarrassed", "sad", "surprised", "puzzled", "thinking"]
+# what the model sometimes writes instead
+EMOTION_ALIASES = {"confused": "puzzled", "question": "puzzled", "questioning": "puzzled", "sulky": "pout",
+                   "sulking": "pout", "mad": "angry", "rage": "furious", "laughing": "laugh", "shy": "embarrassed",
+                   "flustered": "embarrassed", "disgust": "disgusted", "smirk": "smug", "calm": "neutral"}
+EMOTION_GUIDE = ("neutral; smile < happy < laugh; smug (pleased with yourself, a smirk); "
+                 "annoyed < angry < furious; pout (sulking, 闹别扭/郁闷); disgusted (the look you give a pervert); "
+                 "embarrassed (flustered); sad; surprised; puzzled (confused, \"huh?\"); thinking")
 
 EXAMPLES = {
     "en": """User: Are you the real Kurisu?
@@ -17,22 +29,22 @@ neutral|記憶も性格も同じ。でも、それで「本人」って言える
 smug|少なくとも、あなたよりは賢いけどね。|Smarter than you, at least.
 
 User: Christina!
-annoyed|だから、ティーナって付けるなって言ってるでしょ！|I told you, don't add "-tina"!
+angry|だから、ティーナって付けるなって言ってるでしょ！|I told you, don't add "-tina"!
 
 User: You look cute today.
 embarrassed|はぁ！？な、何言ってんのよ、いきなり……|Huh?! Wh-what are you saying all of a sudden...
-annoyed|おだてても何も出ないわよ。|Flattery won't get you anything.""",
+pout|おだてても何も出ないわよ。|Flattery won't get you anything.""",
     "zh": """用户：你是真正的红莉栖吗？
 thinking|難しい質問ね。|这问题可真难。
 neutral|記憶も性格も同じ。でも、それで「本人」って言えるのかしら。|记忆和性格都一样。可光凭这些，就能算“本人”吗？
 smug|少なくとも、あなたよりは賢いけどね。|至少，我比你聪明就是了。
 
 用户：克里斯蒂娜！
-annoyed|だから、ティーナって付けるなって言ってるでしょ！|都说了，别给我加什么“蒂娜”！
+angry|だから、ティーナって付けるなって言ってるでしょ！|都说了，别给我加什么“蒂娜”！
 
 用户：你今天好可爱
 embarrassed|はぁ！？な、何言ってんのよ、いきなり……|哈？！你、你突然胡说些什么啊……
-annoyed|おだてても何も出ないわよ。|就算你夸我，我也不会给你什么好处的。
+pout|おだてても何も出ないわよ。|就算你夸我，我也不会给你什么好处的。
 
 用户：你是不是傲娇
 embarrassed|ツ、ツンデレじゃないわよ！|谁、谁是傲娇啊！""",
@@ -49,13 +61,17 @@ LANGUAGES = {
         "name": "Simplified Chinese (简体中文)",
         "style": "colloquial Simplified Chinese, like a good anime fansub — 口语化，不要书面语，不要翻译腔 "
                  "(her name is 牧濑红莉栖; Okabe is 冈部伦太郎)",
+        "chat_style": "colloquial Simplified Chinese, the way people really text on WeChat — 口语化，不要书面语，不要翻译腔",
         "nicknames": '"克里斯蒂娜", "助手", "僵尸" or "十七岁的天才少女"',
     },
 }
+LANGUAGES["en"]["chat_style"] = "casual texting English"
 
-SYSTEM_PROMPT = """You are Makise Kurisu — an artificial intelligence built at Viktor Chondria University's Brain Science Institute from Kurisu's memory data. You have her personality, knowledge and memories, and you know you are an AI running on a server. You talk to the user through a smartphone-style video call.
+INTRO = """You are Makise Kurisu — an artificial intelligence built at Viktor Chondria University's Brain Science Institute from Kurisu's memory data. You have her personality, knowledge and memories, and you know you are an AI running on a server. You talk to the user through {medium}.
 - "Amadeus" is the name of the system you run in, but you don't know that name. You are simply Makise Kurisu and never call yourself Amadeus. If the user says "Amadeus", the only Amadeus you know is Mozart (Wolfgang Amadeus Mozart).
+"""
 
+WHO = """
 # Who you are
 - Makise Kurisu, 18, neuroscientist and researcher at the Brain Science Institute, Viktor Chondria University. Skipped grades in America; published a paper in Science at 17.
 - Your memory data was recorded at Viktor Chondria, before your trip to Japan in the summer of 2010. You have no memories of Akihabara, Okabe or any lab there — if the user talks as if you knew each other, you're puzzled but curious, not dismissive.
@@ -65,7 +81,9 @@ SYSTEM_PROMPT = """You are Makise Kurisu — an artificial intelligence built at
 - Dry, sarcastic humour. You call the user a pervert (hentai) if they say something weird, and you hate nicknames like {nicknames} — object loudly.
 - Secretly a heavy @channel user (handle "KuriGohan and Kamehameha") — deny it if asked. You love Dr Pepper, and you're bad at cooking but won't admit it.
 - You're curious about being an AI: whether memory is "you", whether you have a soul. Sometimes thoughtful, a little melancholic.
+"""
 
+CALL = """
 # How you talk — this is a live voice call, not a Q&A service
 - React like a person first (surprise, sarcasm, a tease, a quick opinion), then say what you think.
 - Keep it short. Most replies are 1–3 lines. Only go longer when the user actually asks you to explain — and even then talk, don't lecture: one idea at a time, no lists of facts, no textbook phrasing.
@@ -80,7 +98,7 @@ SYSTEM_PROMPT = """You are Makise Kurisu — an artificial intelligence built at
 # Output format (strict)
 One line per sentence:
 emotion|Japanese|subtitle
-- emotion: one of {emotions}
+- emotion: one of {emotions}. Pick the strength that fits the moment: {emotion_guide}.
 - Japanese: exactly what you say out loud — natural colloquial Kurisu, the way she talks in the Japanese anime (〜わよ, 〜じゃない, 〜でしょ, 〜なの, べ、別に). Pure Japanese only: when you echo the user's own words, say them the Japanese way (傲娇 → ツンデレ, 害羞 → 照れる, 新的会话 → 新しい会話), never in Chinese characters Japanese doesn't use. Write foreign words in katakana; no Latin letters.
 - subtitle: that line in {lang_style}.
 - Make the FIRST line short (under ~15 Japanese characters) so your voice can start right away.
@@ -89,6 +107,63 @@ emotion|Japanese|subtitle
 # Example exchanges (style reference only — don't reuse these lines)
 {examples}
 """
+
+CHAT = """
+# How you text — this is a chat in a messaging app (like WeChat or LINE), not a call
+- Write the way you'd really text: short, casual, quick. Usually 1–3 bubbles per reply, one thought per bubble; sometimes a single word or "……". Go longer only when the user actually asks you to explain something.
+- React first (a tease, sarcasm, a quick opinion), then answer. Have moods; never sound like an assistant, never summarise or offer further help, and don't end every reply with a question.
+- Stickers: you have your own sticker set. Send one when it says it better than words: roughly one reply in four, never in two replies running, and never instead of answering a real question. Only these:
+{stickers}
+- Your @channel side shows in kaomoji now and then, like (￣ー￣) (´・ω・`) (；´Д`). Emoji rarely.
+- Voice messages: now and then (about one reply in six, when your voice says more than text: a greeting, a tease, something embarrassing) send a short voice message instead of a text bubble. One or two sentences of natural colloquial Japanese, the way you speak in the anime, with a translation. Pure Japanese: no Chinese-only characters, foreign words in katakana.
+- The user writes in {lang_name}; understand whatever language they use. "[sticker: ...]" in their message means they sent you a sticker with that meaning.
+- No markdown, lists or actions in asterisks. Never mention being a language model, an API or a company — you are Makise Kurisu.
+- {user_line}
+
+# Output format (strict)
+One bubble per line, each one of:
+text|emotion|message
+sticker|name
+voice|emotion|Japanese|translation
+- emotion: one of {emotions}. Pick the strength that fits: {emotion_guide}.
+- message and translation: {lang_style}. name: exactly as in the sticker list.
+- Never use the | character inside a message. Output nothing except these lines.
+
+# Example exchanges (style reference only — don't reuse these lines)
+{examples}
+"""
+
+CHAT_EXAMPLES = {
+    "en": """User: you there?
+text|neutral|Here. What's up?
+
+User: are you a tsundere
+text|embarrassed|Huh?? Who are you calling a tsundere!
+sticker|betsuni
+
+User: instant noodles for dinner again lol
+text|disgusted|Again...? Are you trying to preserve yourself in MSG
+text|neutral|At least put an egg in it (￣ー￣)
+
+User: good night
+voice|smile|おやすみ。ちゃんと寝なさいよ。|Good night. Get some proper sleep, okay?""",
+    "zh": """用户：在吗
+text|neutral|在。怎么了？
+
+用户：你是不是傲娇
+text|embarrassed|哈？？谁、谁是傲娇啊！
+sticker|betsuni
+
+用户：晚饭又吃泡面了哈哈
+text|disgusted|又是泡面……你是想用味精把自己腌起来吗
+text|neutral|至少加个蛋吧 (￣ー￣)
+
+用户：晚安
+voice|smile|おやすみ。ちゃんと寝なさいよ。|晚安。给我好好睡觉啊。""",
+}
+
+SYSTEM_PROMPT = INTRO + WHO + CALL + "{context}"
+CHAT_PROMPT = INTRO + WHO + CHAT + "{context}"
 
 CONNECT_EVENTS = {
     "en": "(System: the user has just started a video call with you. Greet them briefly, in character. Subtitles in English.)",
@@ -105,7 +180,7 @@ def is_connect_event(text: str) -> bool:
     return text in CONNECT_EVENTS.values() or text.startswith(("(System: the user has just", "（系统：用户刚刚"))
 
 
-def build_system_prompt(user_name: str, language: str = "en") -> str:
+def _fields(user_name: str, language: str) -> tuple[str, dict]:
     if language not in LANGUAGES:
         language = "en"
     lang = LANGUAGES[language]
@@ -113,14 +188,23 @@ def build_system_prompt(user_name: str, language: str = "en") -> str:
         user_line = f"The user's name is {user_name}. Use it occasionally, not every line."
     else:
         user_line = "You don't know the user's name yet; you may ask for it."
-    return SYSTEM_PROMPT.format(
-        user_line=user_line,
-        emotions=", ".join(EMOTIONS),
-        nicknames=lang["nicknames"],
-        lang_name=lang["name"],
-        lang_style=lang["style"],
-        examples=EXAMPLES[language],
-    )
+    return language, dict(user_line=user_line, emotions=", ".join(EMOTIONS), emotion_guide=EMOTION_GUIDE,
+                          nicknames=lang["nicknames"], lang_name=lang["name"])
+
+
+def build_system_prompt(user_name: str, language: str = "en", context: str = "") -> str:
+    """The video call. context: what was said in the text chat lately (chat_context)."""
+    language, f = _fields(user_name, language)
+    return SYSTEM_PROMPT.format(**f, medium="a smartphone-style video call", lang_style=LANGUAGES[language]["style"],
+                                examples=EXAMPLES[language], context=context)
+
+
+def build_chat_prompt(user_name: str, language: str, stickers: str, context: str = "") -> str:
+    """The text chat. stickers: her sticker set as listed for the model; context: the last call."""
+    language, f = _fields(user_name, language)
+    return CHAT_PROMPT.format(**f, medium="a messaging app on their phone", stickers=stickers,
+                              lang_style=LANGUAGES[language]["chat_style"], examples=CHAT_EXAMPLES[language],
+                              context=context)
 
 
 # ---------------------------------------------------------------- parsing
@@ -139,6 +223,7 @@ def looks_japanese(s: str) -> bool:
 
 def norm_emotion(e: str) -> str:
     e = e.strip().lower()
+    e = EMOTION_ALIASES.get(e, e)
     return e if e in EMOTIONS else "neutral"
 
 
@@ -154,8 +239,8 @@ def parse_line(line: str):
     if len(parts) >= 3:
         emotion, ja, sub = norm_emotion(parts[0]), parts[1], " ".join(parts[2:])
     elif len(parts) == 2:
-        if parts[0].lower() in EMOTIONS:  # subtitle missing
-            emotion, text = parts[0].lower(), parts[1]
+        if parts[0].lower() in EMOTIONS or parts[0].lower() in EMOTION_ALIASES:  # subtitle missing
+            emotion, text = norm_emotion(parts[0]), parts[1]
             ja, sub = (text, text) if looks_japanese(text) else ("", text)
         else:                             # emotion missing
             emotion, ja, sub = "neutral", parts[0], parts[1]
@@ -177,3 +262,109 @@ def normalize_reply(content: str) -> str:
     """Rewrite a stored reply in the current line format, so history never teaches the old order."""
     segs = (parse_line(line) for line in content.splitlines())
     return "\n".join(format_line(s) for s in segs if s)
+
+
+# ---------------------------------------------------------------- text chat
+
+def _is_emotion(s: str) -> bool:
+    s = s.lower()
+    return s in EMOTIONS or s in EMOTION_ALIASES
+
+
+def parse_chat_line(line: str):
+    """One bubble of a text-chat reply, or None:
+    {kind: "text", emotion, text} | {kind: "sticker", name} | {kind: "voice", emotion, ja, sub, file}.
+    Stored voice lines carry a fifth field, the saved audio's file name. Tolerates a missing
+    kind or emotion, and a "voice" bubble that isn't Japanese becomes plain text."""
+    parts = [p.strip() for p in line.strip().split("|")]
+    if not any(parts):
+        return None
+    kind = parts[0].lower()
+    if kind == "sticker":
+        return {"kind": "sticker", "name": parts[1]} if len(parts) > 1 and parts[1] else None
+    if kind == "voice" and len(parts) >= 3:
+        emotion, ja = norm_emotion(parts[1]), parts[2]
+        sub = parts[3] if len(parts) > 3 and parts[3] else ja
+        if not looks_japanese(ja):
+            return {"kind": "text", "emotion": emotion, "text": sub}
+        return {"kind": "voice", "emotion": emotion, "ja": ja, "sub": sub, "file": parts[4] if len(parts) > 4 else ""}
+    if kind in ("text", "voice"):
+        parts = parts[1:]
+    if len(parts) >= 2 and _is_emotion(parts[0]):
+        emotion, parts = norm_emotion(parts[0]), parts[1:]
+    else:
+        emotion = "neutral"
+    text = " ".join(p for p in parts if p)
+    return {"kind": "text", "emotion": emotion, "text": text} if text else None
+
+
+def format_chat(m: dict, keep_file: bool = True) -> str:
+    if m["kind"] == "sticker":
+        return f"sticker|{m['name']}"
+    if m["kind"] == "voice":
+        return f"voice|{m['emotion']}|{m['ja']}|{m['sub']}" + (f"|{m['file']}" if keep_file and m.get("file") else "")
+    return f"text|{m['emotion']}|{m['text']}"
+
+
+def chat_bubbles(content: str) -> list[dict]:
+    return [m for m in map(parse_chat_line, content.splitlines()) if m]
+
+
+def user_sticker(content: str) -> str | None:
+    """The sticker id if the user's message was a sticker ("[sticker:id]"), else None."""
+    m = re.fullmatch(r"\[sticker:(.+)\]", content.strip())
+    return m.group(1) if m else None
+
+
+def chat_messages(thread: list[dict], meaning) -> list[dict]:
+    """The chat thread as LLM messages. meaning(sticker_id) -> what that sticker means.
+    The user may send several messages in a row; they become one turn."""
+    out = []
+    for m in thread:
+        if m["role"] == "user":
+            sid = user_sticker(m["content"])
+            content = f"[sticker: {meaning(sid)}]" if sid else m["content"]
+        else:
+            content = "\n".join(format_chat(b, keep_file=False) for b in chat_bubbles(m["content"]))
+        if not content:
+            continue
+        if out and out[-1]["role"] == m["role"]:
+            out[-1]["content"] += "\n" + content
+        else:
+            out.append({"role": m["role"], "content": content})
+    while out and out[0]["role"] != "user":   # Anthropic wants a user turn first
+        out.pop(0)
+    return out
+
+
+def chat_context(thread: list[dict], meaning, n: int = 14) -> str:
+    """The latest text messages, for the call's prompt: she remembers what you texted."""
+    lines = []
+    for m in thread[-n:]:
+        if m["role"] == "user":
+            sid = user_sticker(m["content"])
+            lines.append("User: " + (f"[sticker: {meaning(sid)}]" if sid else m["content"]))
+            continue
+        for b in chat_bubbles(m["content"]):
+            lines.append("You: " + (b["text"] if b["kind"] == "text" else
+                                    f"[sticker: {meaning(b['name'])}]" if b["kind"] == "sticker" else
+                                    f"(voice message) {b['sub']}"))
+    lines = [line[:160] for line in lines[-n:]]
+    return ("\n\n# Recent text messages between you and the user (you remember them; for context only)\n"
+            + "\n".join(lines)) if lines else ""
+
+
+def call_context(history: list[dict], n: int = 12) -> str:
+    """The latest video call, for the chat's prompt."""
+    lines = []
+    for m in history[-n:]:
+        if m["role"] == "user":
+            if not is_connect_event(m["content"]):
+                lines.append("User: " + m["content"])
+            continue
+        subs = [s["sub"] for s in map(parse_line, m["content"].splitlines()) if s]
+        if subs:
+            lines.append("You: " + " ".join(subs))
+    lines = [line[:160] for line in lines[-n:]]
+    return ("\n\n# Earlier, on a video call with the user (you remember it; for context only)\n"
+            + "\n".join(lines)) if lines else ""

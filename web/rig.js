@@ -36,26 +36,42 @@ const PARAMS = {
   angleX: [0, 4.5], angleY: [0, 4.5], angleZ: [0, 4.5],   // head yaw / pitch / roll, degrees
   bodyX: [0, 2.5], bodyZ: [0, 2.5],                        // body sway: px, degrees
   eyeOpen: [1, 12], eyeSmile: [0, 8],
+  eyeAngry: [0, 8], eyeAsym: [0, 8], irisScale: [1, 8],   // glaring lids slant down inward; + narrows the image-right eye
   gazeX: [0, 18], gazeY: [0, 18],                          // -1..1, + = image right / down
   browY: [0, 8], browAngle: [0, 8],                        // browAngle: - angry (inner ends down), + sad
+  browAsym: [0, 8],                                        // + raises the image-left brow, lowers the other a little
   mouthForm: [0, 8], mouthWide: [0, 8], mouthSkew: [0, 8], mouthBase: [0, 8],
-  cheek: [0, 2.5], hatch: [0, 3],
+  mouthPout: [0, 8], mouthWave: [0, 8],                    // pursed, pushed-out lips; a wavy (flustered) line
+  cheek: [0, 2.5], hatch: [0, 3], cheekPuff: [0, 4],
 };
 
 // Expression poses: only what differs from rest. Angles in degrees; + angleX turns
 // her face toward the image's right, + angleY lifts the chin, + angleZ tilts the
-// head clockwise (toward the image's right shoulder).
+// head clockwise (toward the image's right shoulder). Some come in strengths:
+// smile < happy < laugh, annoyed < angry < furious.
 const POSES = {
   neutral: {},
+  smile: { eyeSmile: 0.3, eyeOpen: 0.96, mouthForm: 0.55, browY: 0.15, angleZ: 2.5, angleY: 1.5, cheek: 0.12 },
   happy: { eyeSmile: 0.6, mouthForm: 0.85, browY: 0.35, angleZ: 4, angleY: 2.5, cheek: 0.25 },
-  annoyed: { browAngle: -0.9, browY: -0.25, eyeOpen: 0.78, gazeX: -0.45, angleX: -11, angleZ: -2.5, angleY: 1.5, mouthForm: -0.55, cheek: 0.3 },
-  embarrassed: { cheek: 1, hatch: 1, eyeOpen: 0.8, gazeX: -0.35, gazeY: 0.55, angleY: -7, angleX: 8, angleZ: 3.5, browAngle: 0.55, mouthForm: -0.25, mouthWide: -0.35 },
-  sad: { browAngle: 0.95, browY: -0.1, eyeOpen: 0.66, gazeY: 0.55, angleY: -8, angleZ: -2, mouthForm: -0.65 },
-  surprised: { eyeOpen: 1.18, browY: 1, mouthBase: 0.4, angleY: 4.5, gazeY: -0.05 },
-  thinking: { gazeX: 0.55, gazeY: -0.65, angleZ: -5, angleX: 7, angleY: 4, browAngle: -0.25, browY: 0.1, mouthForm: -0.15 },
+  laugh: { eyeSmile: 1, eyeOpen: 0.12, mouthForm: 1, mouthBase: 0.55, mouthWide: 0.3, browY: 0.45, browAngle: 0.2, angleY: 5, angleZ: 5, cheek: 0.45 },
   smug: { eyeOpen: 0.8, eyeSmile: 0.12, mouthForm: 0.7, mouthSkew: 0.6, angleY: 5, angleZ: -5, angleX: -4, browY: 0.15 },
+  annoyed: { browAngle: -0.9, browY: -0.25, eyeOpen: 0.78, eyeAngry: 0.35, gazeX: -0.45, angleX: -11, angleZ: -2.5, angleY: 1.5, mouthForm: -0.55, cheek: 0.3 },
+  angry: { browAngle: -1, browY: -0.45, eyeOpen: 1, eyeAngry: 0.75, mouthForm: -0.7, mouthBase: 0.42, mouthWide: 0.3, angleY: -3, angleX: -4, angleZ: -2, cheek: 0.25 },
+  furious: { browAngle: -1, browY: -0.55, eyeOpen: 1.1, eyeAngry: 0.9, irisScale: 0.84, mouthForm: -0.9, mouthBase: 0.62, mouthWide: 0.4, angleY: -4, angleZ: 1.5, cheek: 0.4 },
+  pout: { mouthPout: 1, cheekPuff: 1, mouthForm: -0.25, mouthSkew: 0.25, eyeOpen: 0.84, gazeX: -0.6, gazeY: 0.15, browAngle: 0.4, browY: -0.1, angleX: 8, angleZ: 3, angleY: -3, cheek: 0.6 },
+  disgusted: { eyeOpen: 0.55, eyeAngry: 0.2, browAngle: -0.35, browY: -0.15, mouthForm: -0.5, mouthSkew: -0.55, mouthWave: 0.25, angleY: 4, angleX: -3, angleZ: -3, gazeY: 0.1 },
+  embarrassed: { cheek: 1, hatch: 1, eyeOpen: 0.8, gazeX: -0.35, gazeY: 0.55, angleY: -7, angleX: 8, angleZ: 3.5, browAngle: 0.55, mouthForm: -0.25, mouthWide: -0.35, mouthWave: 0.8 },
+  sad: { browAngle: 0.95, browY: -0.1, eyeOpen: 0.66, gazeY: 0.55, angleY: -8, angleZ: -2, mouthForm: -0.65 },
+  surprised: { eyeOpen: 1.18, irisScale: 0.9, browY: 1, mouthBase: 0.4, angleY: 4.5, gazeY: -0.05 },
+  puzzled: { angleZ: 9, angleX: 4, angleY: 1, browAsym: 0.9, browY: 0.15, eyeOpen: 1.04, eyeAsym: 0.6, mouthForm: -0.1, mouthWave: 0.45, gazeY: -0.1 },
+  thinking: { gazeX: 0.55, gazeY: -0.65, angleZ: -5, angleX: 7, angleY: 4, browAngle: -0.25, browY: 0.1, mouthForm: -0.15 },
   listening: { angleZ: 3.5, angleY: -1.5, browY: 0.2, eyeOpen: 1.04, gazeY: 0.05 },   // UI state, not an LLM emotion
 };
+// how hard a new expression jolts the hair (default 0.4)
+const HAIR_KICK = { neutral: 0.2, listening: 0.15, sad: 0.25, thinking: 0.3, smile: 0.3, puzzled: 0.35, pout: 0.5,
+  surprised: 1, furious: 1, angry: 0.9, annoyed: 0.8, laugh: 0.8, happy: 0.7, embarrassed: 0.6 };
+// how long she goes between blinks, relative to usual: a glare or a shock holds the eyes open
+const BLINK_GAP = { surprised: 1.8, angry: 1.5, furious: 2.2, thinking: 1.3, sad: 0.8, puzzled: 1.2 };
 
 class Motion {
   constructor() {
@@ -69,14 +85,45 @@ class Motion {
     this.gaze = { x: 0, y: 0, next: 1 };
     this.mouth = 0; this.mouthV = 0;
     this.energy = 0; this.energySlow = 0;
-    this.hair = { x: 0, v: 0 };
+    // hair: left lock, bangs, right lock swing sideways; y bobs the tips
+    this.hair = { L: { x: 0, v: 0 }, C: { x: 0, v: 0 }, R: { x: 0, v: 0 }, Y: { x: 0, v: 0 } };
     this.seed = Math.random() * 100;
   }
 
   setPose(name, t) {
+    const was = this.poseName;
     this.pose = POSES[name] || POSES.neutral;
     this.poseName = POSES[name] ? name : "neutral";
     this.poseAt = t;
+    // a new expression jolts the hair a little (a hop when surprised, a toss when annoyed)
+    if (was && was !== this.poseName) {
+      const k = HAIR_KICK[this.poseName] ?? 0.4;
+      this.hair.Y.v -= 90 * k;
+      this.hair.L.v += 50 * k; this.hair.R.v -= 35 * k; this.hair.C.v += 25 * k;
+    }
+  }
+
+  // Motion that belongs to an expression itself, too quick for the pose springs: laughing
+  // shakes her, fury trembles, sulking mumbles under her breath, a puzzled head rocks.
+  live(out, t, since, silent) {
+    const name = this.poseName, s = this.seed;
+    if (name === "laugh") {
+      const a = 2.2 * (0.45 + 0.55 * Math.exp(-since / 1.6)), ph = 2 * Math.PI * 3.3 * t;
+      out.angleY += a * (Math.abs(Math.sin(ph)) - 0.64);
+      out.angleZ += 0.35 * a * Math.sin(ph);
+      out.hairY += 2.5 * a * Math.abs(Math.sin(ph));
+      if (silent) out.mouthOpen += 0.12 * Math.abs(Math.sin(ph));
+    } else if (name === "furious" || (name === "angry" && since < 1.2)) {
+      const a = name === "furious" ? 1 : 0.5 * (1 - since / 1.2);
+      out.angleZ += a * (0.7 * Math.sin(2 * Math.PI * 9.3 * t) + 0.35 * Math.sin(2 * Math.PI * 13.7 * t + 1));
+      out.bodyX += a * 1.4 * Math.sin(2 * Math.PI * 10.9 * t);
+    } else if (name === "pout" && silent) {
+      // bursts of mumbling a few times a minute, a few quick syllables each
+      const burst = smoothstep(0.55, 0.9, Math.sin(2 * Math.PI * 0.42 * t + s));
+      out.mouthOpen = Math.max(out.mouthOpen, burst * 0.14 * (0.5 + 0.5 * Math.sin(2 * Math.PI * 6.2 * t)));
+    } else if (name === "puzzled") {
+      out.angleZ += 1.2 * Math.sin(2 * Math.PI * 0.35 * t + s);
+    }
   }
 
   // level: current voice loudness, 0..1 (lip-sync); null when silent
@@ -94,9 +141,10 @@ class Motion {
     target.bodyX += 2.0 * Math.sin(0.17 * t + 7 * s);
     target.bodyZ += 0.5 * Math.sin(0.21 * t + 4 * s);
 
-    // gaze: small saccades around the pose's direction; annoyed glances back at you now and then
+    // gaze: small saccades around the pose's direction; annoyed or sulking, she glances
+    // back at you now and then
     if (t > this.gaze.next) {
-      const lookBack = this.poseName === "annoyed" && Math.random() < 0.35;
+      const lookBack = (this.poseName === "annoyed" || this.poseName === "pout") && Math.random() < 0.35;
       this.gaze.x = lookBack ? 0.5 : (Math.random() - 0.5) * 0.35;
       this.gaze.y = lookBack ? 0 : (Math.random() - 0.5) * 0.25;
       this.gaze.next = t + (lookBack ? 0.9 : 1.2 + Math.random() * 2.8);
@@ -127,10 +175,14 @@ class Motion {
     // a fresh expression lands with a little extra motion
     const since = t - this.poseAt;
     if (since < 0.6) {
-      const kick = Math.sin(clamp(since / 0.6, 0, 1) * Math.PI);
-      if (this.poseName === "surprised") { target.angleY += 5 * kick; target.eyeOpen += 0.12 * kick; }
-      if (this.poseName === "annoyed") target.angleX -= 5 * kick;
-      if (this.poseName === "embarrassed") target.angleY -= 3 * kick;
+      const kick = Math.sin(clamp(since / 0.6, 0, 1) * Math.PI), name = this.poseName;
+      if (name === "surprised") { target.angleY += 5 * kick; target.eyeOpen += 0.12 * kick; }
+      if (name === "annoyed") target.angleX -= 5 * kick;
+      if (name === "embarrassed") target.angleY -= 3 * kick;
+      if (name === "angry" || name === "furious") { target.angleY -= 4 * kick; target.browY -= 0.2 * kick; }  // leans in
+      if (name === "puzzled") target.angleZ += 4 * kick;
+      if (name === "disgusted") target.angleY += 3 * kick;   // pulls back
+      if (name === "pout") target.angleX += 4 * kick;        // turns away with a huff
     }
 
     Object.assign(target, this.override);
@@ -154,23 +206,32 @@ class Motion {
         blink = blink * blink * (3 - 2 * blink);
         if (u > len) {
           b.t = -1;
-          b.next = t + (b.double ? 0.12 : 2.2 + Math.random() * 4);
+          b.next = t + (b.double ? 0.12 : (2.2 + Math.random() * 4) * (BLINK_GAP[this.poseName] ?? 1));
           if (b.double) b.double = false;
         }
       }
     }
 
-    // hair lags behind head turns (an underdamped spring driven by head speed)
-    const headVel = (p.angleX - (this.prevX ?? p.angleX)) / Math.max(dt, 1e-3) + 0.6 * (p.angleZ - (this.prevZ ?? p.angleZ)) / Math.max(dt, 1e-3);
-    this.prevX = p.angleX; this.prevZ = p.angleZ;
-    spring(this.hair, clamp(-headVel * 0.5, -14, 14), 7, dt, 0.28);
-    const h = this.hair;
+    // hair lags behind head and body moves. The two side locks and the bangs hang on
+    // springs of different lengths, so they swing out of step, and a breeze that never
+    // quite repeats keeps them moving when she is still. Values are px at the tips.
+    const vel = (k, prev) => (p[k] - (this[prev] ?? p[k])) / Math.max(dt, 1e-3);
+    const vx = vel("angleX", "prevX"), vz = vel("angleZ", "prevZ"), vy = vel("angleY", "prevY"), vb = vel("bodyX", "prevB");
+    this.prevX = p.angleX; this.prevZ = p.angleZ; this.prevY = p.angleY; this.prevB = p.bodyX;
+    const push = clamp(-(vx + 0.8 * vz) * 0.75 - vb * 0.8, -36, 36);
+    const breeze = (f, ph) => 4.5 * Math.sin(f * t + ph + s) + 2.2 * Math.sin(1.73 * f * t + 2 * ph + 3 * s) + Math.sin(3.1 * f * t + ph);
+    const H = this.hair;
+    spring(H.L, push + breeze(0.8, 0), 5.2, dt, 0.2);
+    spring(H.R, push + breeze(0.95, 2.1), 6, dt, 0.2);
+    spring(H.C, 0.7 * push + 0.6 * breeze(1.4, 4.2), 8.5, dt, 0.3);
+    spring(H.Y, clamp(vy * 0.6, -14, 14), 7.5, dt, 0.3);
 
     const out = { ...p };
     out.eyeOpen = Math.max(0, p.eyeOpen) * blink;
     out.mouthOpen = Math.max(p.mouthBase, this.mouth);
     out.mouthWide = p.mouthWide + this.vowel * (shape ? 0.9 : 0.7) * clamp(this.mouth * 2, 0, 1);
-    out.hairX = h.x + 1.2 * Math.sin(1.3 * t + s) + 0.6 * Math.sin(2.3 * t + 2 * s);
+    out.hairL = H.L.x; out.hairC = H.C.x; out.hairR = H.R.x; out.hairY = H.Y.x;
+    this.live(out, t, since, level == null);
     out.breath = Math.sin(t * 2 * Math.PI / 4.2);
     return out;
   }
@@ -278,14 +339,19 @@ class Rig {
       m.breath[k] = smoothstep(H * 1.02, this.bodyTop + F.L * 0.5, y);
     }
     if (HAIR_TAGS.has(m.tag)) {
+      // how far each vertex swings (0 at the roots, most at the tips), and which lock it
+      // belongs to: the left side, the bangs in the middle, or the right side
       m.sway = new Float32Array(m.n);
+      m.lock = new Float32Array(3 * m.n);
       const root = F.top;
       const tip = m.rect[1] + m.rect[3];
-      const reach = m.tag === "front hair" ? 0.5 : 1;
+      const reach = m.tag === "front hair" ? 0.8 : 1;
       for (let k = 0; k < m.n; k++) {
-        const y = m.rest[2 * k + 1];
+        const x = m.rest[2 * k], y = m.rest[2 * k + 1];
         const t = clamp((y - root) / Math.max(tip - root, 1), 0, 1);
         m.sway[k] = reach * Math.pow(t, 1.6);
+        const u = (x - F.cx) / (F.W / 2), l = smoothstep(-0.15, -0.55, u), r = smoothstep(0.15, 0.55, u);
+        m.lock.set([l, 1 - l - r, r], 3 * k);
       }
     }
     // eyelids: precompute each vertex's lid lines; the deformation itself is per frame
@@ -373,6 +439,25 @@ class Rig {
     return m;
   }
 
+  // Puffed cheeks (sulking): how far each vertex of a face-surface mesh moves at full
+  // puff, a round bulge out and a little down on each cheek. Worked out on first use.
+  puffOf(m) {
+    if (m.puff) return m.puff;
+    const F = this.face, A = this.spec.anchors.head, half = (A.cheekW ?? F.W * 0.65) / 2;
+    const cy = F.eyeY + 0.58 * F.L, R = 0.45 * F.L, out = new Float32Array(2 * m.n);
+    for (let k = 0; k < m.n; k++) {
+      const x = m.rest[2 * k], y = m.rest[2 * k + 1];
+      for (const side of [-1, 1]) {
+        const cx = F.cx + side * 0.62 * half, d2 = ((x - cx) ** 2 + (y - cy) ** 2) / (R * R);
+        if (d2 >= 1) continue;
+        const w = (1 - d2) ** 2;
+        out[2 * k] += side * 12 * w;
+        out[2 * k + 1] += 3.5 * w;
+      }
+    }
+    return (m.puff = out);
+  }
+
   // ---- per frame
   pose(P) {
     const pv = this.pivot;
@@ -396,10 +481,16 @@ class Rig {
     const breathDy = -P.breath * Hh * 0.0022;
     const bodyPx = W / 2, bodyPy = Hh * 1.1;
     const lid = m.lid, iris = m.iris, brow = m.brow, sway = m.sway;
-    let open = 1, smile = 0;
-    if (lid) { open = P.eyeOpen; smile = P.eyeSmile; }
+    let open = 1, smile = 0, angry = 0;
+    const inward = m.side === "l" ? 1 : -1;   // the eye's inner corner is toward the face's middle
+    if (lid) {
+      open = P.eyeOpen * (1 - 0.35 * Math.max(0, inward < 0 ? P.eyeAsym : -P.eyeAsym));
+      smile = P.eyeSmile; angry = P.eyeAngry;
+    }
+    const puff = m.tag === "face" && P.cheekPuff > 0.002 ? this.puffOf(m) : null;
     for (let k = 0; k < m.n; k++) {
       let x = rest[2 * k], y = rest[2 * k + 1];
+      if (puff) { x += P.cheekPuff * puff[2 * k]; y += P.cheekPuff * puff[2 * k + 1]; }
 
       if (lid) {
         const T = lid.T[k], B = lid.B[k], u = lid.U[k], Hl = B - T;
@@ -411,12 +502,15 @@ class Rig {
         let Tn, Bn;
         if (open <= 1) { Tn = Ts + (L - Ts) * (1 - open); Bn = Bs + (L - Bs) * (1 - open); }
         else { Tn = T - (open - 1) * Hl * 0.9; Bn = B + (open - 1) * Hl * 0.12; }
+        // a glare: the upper lid comes down, most at the inner corner
+        if (angry > 0) Tn = Math.min(Tn + Hl * angry * (0.05 + 0.3 * smoothstep(-0.1, 0.9, u * inward)), Bn - 1);
         let dy;
         if (y <= T) dy = (Tn - T) * lid.FU[k];
         else if (y >= B) dy = Bn - B;
         else dy = Tn + (y - T) / Math.max(B - T, 0.01) * (Bn - Tn) - y;
         y += dy * lid.G[k];
       } else if (iris) {
+        if (P.irisScale !== 1) { x = iris.cx + (x - iris.cx) * P.irisScale; y = iris.cy + (y - iris.cy) * P.irisScale; }
         x += P.gazeX * iris.w * 0.15;
         y += P.gazeY * iris.h * 0.13 + (1 - Math.min(P.eyeOpen, 1)) * iris.h * 0.06;
       } else if (brow) {
@@ -424,9 +518,14 @@ class Rig {
         const a = P.browAngle * 11 * DEG * brow.sign, c = Math.cos(a), s = Math.sin(a);
         x = brow.cx + dx * c - dy * s;
         y = brow.cy + dx * s + dy * c - P.browY * brow.lift + (1 - Math.min(P.eyeOpen, 1)) * brow.lift * 0.3;
+        y -= P.browAsym * brow.lift * (brow.sign < 0 ? 0.8 : -0.25);   // one brow up (puzzled)
       }
 
-      if (sway) { const w = sway[k]; x += P.hairX * w; y += Math.abs(P.hairX) * w * 0.08; }
+      if (sway) {
+        const w = sway[k], g = m.lock, dx = w * (g[3 * k] * P.hairL + g[3 * k + 1] * P.hairC + g[3 * k + 2] * P.hairR);
+        x += dx;
+        y += w * P.hairY * 0.4 + Math.abs(dx) * 0.08;   // the tips bob, and rise a little as they swing out
+      }
 
       const wh = m.head[k];
       if (wh > 0) {
@@ -467,10 +566,12 @@ function drawMouth(m, P) {
   const cvs = m.canvas;
   ctx.clearRect(0, 0, cvs.width, cvs.height);
   const open = clamp(P.mouthOpen, 0, 1.1), form = P.mouthForm, wide = P.mouthWide, skew = P.mouthSkew;
+  const pout = clamp(P.mouthPout ?? 0, 0, 1), wave = clamp(P.mouthWave ?? 0, 0, 1);
   const cx = (bx + bw / 2 - rx) * s, cy = (by + bh * 0.42 - ry) * s;
   const mw = bw * s;
-  const half = mw * (0.4 + 0.1 * wide - 0.1 * open + 0.06 * Math.max(form, 0));
-  const lift = -form * mw * 0.1;
+  // pursed lips draw the corners in
+  const half = mw * (0.4 + 0.1 * wide - 0.1 * open + 0.06 * Math.max(form, 0)) * (1 - 0.5 * pout);
+  const lift = -form * mw * 0.1 * (1 - 0.5 * pout);
   const tilt = skew * mw * 0.07;
   const lx = cx - half, ly = cy + lift + tilt, rxp = cx + half, ryp = cy + lift - tilt;
   const O = open * mw * 0.42 * (1 - 0.25 * wide);
@@ -480,7 +581,13 @@ function drawMouth(m, P) {
   ctx.strokeStyle = ctx.fillStyle = m.mouth.line;
   soft(true);
   if (O < 1.6 * s) {
-    taper(ctx, lx, ly, cx, arch + O + form * mw * 0.06, rxp, ryp, 2 * s, 0.6 * s);
+    // a wavy line when flustered or puzzled (the anime "~" mouth)
+    taper(ctx, lx, ly, cx, arch + O + form * mw * 0.06, rxp, ryp, 2 * s, 0.6 * s, wave * mw * 0.045);
+    if (pout > 0.05) {   // the pushed-out lower lip, a short faint curve under the line
+      ctx.globalAlpha = 0.5 * pout;
+      taper(ctx, cx - half * 0.7, cy + mw * 0.06, cx, cy + mw * 0.14, cx + half * 0.7, cy + mw * 0.06, 1.4 * s, 0.4 * s);
+      ctx.globalAlpha = 1;
+    }
     return;
   }
   const bottom = cy + O * (1 + 0.15 * Math.max(form, 0));
@@ -513,12 +620,14 @@ function drawMouth(m, P) {
   ctx.globalAlpha = 1;
 }
 
-// A quadratic curve filled as a stroke that is wMid wide in the middle and wEnd at the ends.
-function taper(ctx, x0, y0, qx, qy, x1, y1, wMid, wEnd) {
-  const n = 16, a = [], b = [];
+// A quadratic curve filled as a stroke that is wMid wide in the middle and wEnd at the ends,
+// optionally rippled by `wave` px (one and a half waves along it).
+function taper(ctx, x0, y0, qx, qy, x1, y1, wMid, wEnd, wave = 0) {
+  const n = 24, a = [], b = [];
   for (let i = 0; i <= n; i++) {
     const t = i / n, u = 1 - t;
-    const x = u * u * x0 + 2 * u * t * qx + t * t * x1, y = u * u * y0 + 2 * u * t * qy + t * t * y1;
+    const x = u * u * x0 + 2 * u * t * qx + t * t * x1;
+    const y = u * u * y0 + 2 * u * t * qy + t * t * y1 + wave * Math.sin(3 * Math.PI * t) * Math.sin(Math.PI * t);
     const dx = u * (qx - x0) + t * (x1 - qx), dy = u * (qy - y0) + t * (y1 - qy), len = Math.hypot(dx, dy) || 1;
     const w = (wEnd + (wMid - wEnd) * Math.sin(Math.PI * t)) / 2;
     a.push([x - dy / len * w, y + dx / len * w]);
@@ -815,7 +924,7 @@ export class RigAvatar {
       this.P = P;
       this.rig.pose(P);
       const mouth = this.rig.extras.find(e => e.mouth);
-      const shape = mouth && [P.mouthOpen, P.mouthForm, P.mouthWide, P.mouthSkew].map(v => Math.round(v * 200)).join();
+      const shape = mouth && [P.mouthOpen, P.mouthForm, P.mouthWide, P.mouthSkew, P.mouthPout, P.mouthWave].map(v => Math.round(v * 200)).join();
       if (mouth && shape !== this._mouthShape) {
         this._mouthShape = shape;
         drawMouth(mouth, P);
@@ -848,13 +957,19 @@ export async function createAvatar(el) {
 
 function debugPanel(avatar) {
   window.rigAvatar = avatar;   // for tuning from the console
+  // redraws the mouth for a pose rendered by hand (frame(P) alone keeps the last mouth)
+  window.rigDrawMouth = P => {
+    const mouth = avatar.rig.extras.find(e => e.mouth);
+    if (mouth) { drawMouth(mouth, P); avatar.renderer.texture(mouth, mouth.canvas, false); }
+  };
   const m = avatar.motion;
   const box = document.createElement("div");
   box.style.cssText = "position:fixed;right:8px;top:8px;z-index:50;width:250px;max-height:96vh;overflow:auto;padding:10px;background:#000c;border:1px solid #333;font:12px monospace;color:#ccc";
   const ranges = {
     angleX: [-30, 30], angleY: [-20, 20], angleZ: [-20, 20], bodyX: [-20, 20], bodyZ: [-5, 5],
-    eyeOpen: [0, 1.3], eyeSmile: [0, 1], gazeX: [-1, 1], gazeY: [-1, 1], browY: [-1, 1], browAngle: [-1, 1],
-    mouthForm: [-1, 1], mouthWide: [-1, 1], mouthSkew: [-1, 1], mouthBase: [0, 1], cheek: [0, 1], hatch: [0, 1],
+    eyeOpen: [0, 1.3], eyeSmile: [0, 1], eyeAngry: [0, 1], eyeAsym: [-1, 1], irisScale: [0.7, 1.2], gazeX: [-1, 1], gazeY: [-1, 1], browY: [-1, 1], browAngle: [-1, 1],
+    mouthForm: [-1, 1], mouthWide: [-1, 1], mouthSkew: [-1, 1], mouthBase: [0, 1], mouthPout: [0, 1], mouthWave: [0, 1],
+    browAsym: [-1, 1], cheek: [0, 1], hatch: [0, 1], cheekPuff: [0, 1],
   };
   const btns = document.createElement("div");
   btns.style.cssText = "display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px";

@@ -2,6 +2,7 @@ import { createAvatar } from "./rig.js";
 import { setLang, t } from "./i18n.js";
 import { timeline } from "./lipsync.js";
 import { HandsFree } from "./call.js";
+import { Chat } from "./chat.js";
 
 const $ = s => document.querySelector(s);
 const avatar = await createAvatar($("#avatar"));  // mesh rig if one is built, else sprites
@@ -134,7 +135,8 @@ function hideSubtitle() { subEl.classList.remove("show"); }
 // Pause before a line (s), from how the previous one ended and how this one starts: she
 // trails off after ……, waits a moment after a question, snaps back after an exclamation,
 // and takes longer when thinking or sad. A little randomness keeps it from sounding metronomic.
-const PAUSE_MOOD = { thinking: 1.3, sad: 1.25, smug: 1.1, annoyed: 0.8, surprised: 0.85 };
+const PAUSE_MOOD = { thinking: 1.3, sad: 1.25, puzzled: 1.2, pout: 1.15, smug: 1.1, disgusted: 1.05,
+  laugh: 0.85, surprised: 0.85, annoyed: 0.8, angry: 0.75, furious: 0.65 };
 function linePause(prev, next) {
   const end = (prev.ja || "").trim(), start = (next.ja || "").trim();
   let s = /[…‥]$|\.\.\.$/.test(end) ? 0.75 : /[？?]$/.test(end) ? 0.5 : /[！!]$/.test(end) ? 0.3 : 0.42;
@@ -477,8 +479,30 @@ $("#btn-reset").onclick = async () => {
   if (!confirm(t("confirmReset"))) return;
   await api("/api/reset", { method: "POST" });
   $("#log-list").replaceChildren();
+  if (chat.loaded) chat.load();
   $("#settings-msg").textContent = t("erased");
 };
+
+// ---------------------------------------------------------------- text chat
+
+const chat = new Chat({
+  api, toast,
+  settings: () => settings,
+  onCall: () => { setMode("call"); if (!connected) $("#connect").click(); },
+  onBack: () => setMode("call"),   // the call, or the start screen if she hasn't been called yet
+});
+
+function setMode(mode) {
+  $("#phone").dataset.mode = mode;
+  if (mode === "chat") {
+    stopSpeaking();
+    if (call.active) callBtn.click();   // a hands-free call would hear you typing
+    chat.open();
+  }
+}
+
+$("#open-chat").onclick = () => setMode("chat");
+$("#btn-chat").onclick = () => setMode("chat");
 
 // Preview the UI language as soon as it's picked; Cancel restores the saved one.
 form.elements.language.onchange = e => setLang(e.target.value);

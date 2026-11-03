@@ -56,11 +56,18 @@ def _in_japanese(ch: str) -> bool:
 # child, while Kurisu's voice is calm and fairly low. Emotion mostly changes pace.
 EDGE_PROSODY = {
     "neutral": (0, 0),
+    "smile": (2, 3),
     "happy": (4, 5),
+    "laugh": (6, 8),
     "annoyed": (8, 2),
+    "angry": (10, 3),
+    "furious": (14, 5),
+    "pout": (-4, 2),
+    "disgusted": (-4, -4),
     "embarrassed": (6, 6),
     "sad": (-8, -6),
     "surprised": (6, 8),
+    "puzzled": (-3, 4),
     "thinking": (-6, -3),
     "smug": (-3, -2),
 }
@@ -143,12 +150,19 @@ class GPTSoVITS:
 # differences made her speed jump from one line to the next.
 VITS_SPEED = {
     "annoyed": 0.98,
+    "angry": 0.97,
+    "furious": 0.95,
+    "laugh": 0.98,
     "surprised": 0.98,
     "sad": 1.04,
     "thinking": 1.03,
+    "pout": 1.03,
+    "puzzled": 1.02,
+    "disgusted": 1.02,
 }
 # How long she pauses inside a line, by emotion (the app uses the same between lines)
-PAUSE_MOOD = {"thinking": 1.3, "sad": 1.25, "smug": 1.1, "annoyed": 0.8, "surprised": 0.85}
+PAUSE_MOOD = {"thinking": 1.3, "sad": 1.25, "puzzled": 1.2, "pout": 1.15, "smug": 1.1, "disgusted": 1.05,
+              "laugh": 0.85, "surprised": 0.85, "annoyed": 0.8, "angry": 0.75, "furious": 0.65}
 
 
 class AmadeusVITS:

@@ -1,8 +1,12 @@
 """Amadeus backend: serves the UI and proxies LLM / TTS / STT."""
 import asyncio
+import io
 import itertools
 import json
 import time
+import uuid
+import wave
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -10,7 +14,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, kana, persona
+from . import config, kana, persona, stickers
 from .llm import LLMError, stream_chat
 from .stt import WhisperSTT
 from .tts import TTSError, Voice, speakable
@@ -27,16 +31,21 @@ app = FastAPI(title="Amadeus")
 
 # ---------- conversation history ----------
 
-def load_history() -> list[dict]:
+def load_history(path: Path = config.HISTORY_PATH) -> list[dict]:
     try:
-        return json.loads(config.HISTORY_PATH.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
 
 
-def save_history(history: list[dict]):
+def save_history(history: list[dict], path: Path = config.HISTORY_PATH, keep: int = MAX_HISTORY * 2):
     config.DATA_DIR.mkdir(exist_ok=True)
-    config.HISTORY_PATH.write_text(json.dumps(history[-MAX_HISTORY * 2:], ensure_ascii=False, indent=1), encoding="utf-8")
+    path.write_text(json.dumps(history[-keep:], ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def sticker_meaning(sid: str) -> str:
+    s = stickers.find(sid or "")
+    return s["meaning"] if s else (sid or "")
 
 
 def history_for_display(history: list[dict]) -> list[dict]:
@@ -78,7 +87,8 @@ async def chat(body: ChatIn):
     history = [m if m["role"] == "user" else {**m, "content": persona.normalize_reply(m["content"])}
                for m in history[-MAX_HISTORY * 2:]]
     messages = history + [{"role": "user", "content": user_text}]
-    system = persona.build_system_prompt(settings.get("user_name", ""), language)
+    system = persona.build_system_prompt(settings.get("user_name", ""), language,
+                                         context=persona.chat_context(load_history(config.CHAT_PATH), sticker_meaning))
 
     # A new turn makes any voice still being synthesised for the previous one stale.
     for task in voices.values():
@@ -141,6 +151,155 @@ async def chat(body: ChatIn):
         yield sse("done", {"timing": timing})
 
     return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+
+# ---------- text chat (WeChat style): text bubbles, her stickers, the odd Japanese voice message ----------
+
+CHAT_KEEP = 400   # messages kept for display; the model sees the last MAX_HISTORY turns
+
+
+class TextIn(BaseModel):
+    message: str | None = None
+    messages: list[str] | None = None   # several sent while she was still replying: one turn
+    sticker: str | None = None          # the user sent one of her stickers (its id)
+
+
+def sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def wav_seconds(audio: bytes) -> float | None:
+    try:
+        with wave.open(io.BytesIO(audio)) as w:
+            return round(w.getnframes() / w.getframerate(), 2)
+    except (wave.Error, EOFError):
+        return None
+
+
+async def record_voice(ja: str, emotion: str) -> tuple[str | None, float | None]:
+    """Synthesise a voice message and keep it (data/voice/), so it can be replayed later."""
+    if not ja or not tts.enabled:
+        return None, None
+    try:
+        audio, mime, _ = await asyncio.wait_for(tts.synthesize(ja, emotion), 45)
+    except (TTSError, asyncio.TimeoutError):
+        return None, None
+    config.VOICE_DIR.mkdir(parents=True, exist_ok=True)
+    name = f"{uuid.uuid4().hex[:12]}.{'wav' if mime == 'audio/wav' else 'mp3'}"
+    (config.VOICE_DIR / name).write_bytes(audio)
+    # keep the newest few hundred; older messages scroll out of the chat's memory anyway
+    for old in sorted(config.VOICE_DIR.iterdir(), key=lambda p: p.stat().st_mtime)[:-300]:
+        old.unlink(missing_ok=True)
+    return name, wav_seconds(audio) if name.endswith(".wav") else None
+
+
+def bubble_out(b: dict) -> dict | None:
+    """A bubble as the page shows it; None for a sticker that doesn't exist."""
+    if b["kind"] == "sticker":
+        s = stickers.find(b["name"])
+        return {"kind": "sticker", "id": s["id"], "url": s["url"], "meaning": s["meaning"]} if s else None
+    if b["kind"] == "voice":
+        return {"kind": "voice", "emotion": b["emotion"], "ja": b["ja"], "sub": b["sub"], "file": b.get("file", "")}
+    return {"kind": "text", "emotion": b["emotion"], "text": b["text"]}
+
+
+@app.post("/api/text")
+async def text_chat(body: TextIn):
+    settings = config.load_settings()
+    if not settings.get("model"):
+        raise HTTPException(400, "No model configured. Open settings and enter your API details.")
+    language = settings.get("language", "en")
+    now = int(time.time() * 1000)
+    if body.sticker:
+        s = stickers.find(body.sticker)
+        if not s:
+            raise HTTPException(400, "Unknown sticker")
+        sent = [f"[sticker:{s['id']}]"]
+    else:
+        sent = [m.strip() for m in (body.messages or [body.message or ""]) if m and m.strip()]
+        if not sent:
+            raise HTTPException(400, "Empty message")
+    user = [{"role": "user", "content": m, "ts": now} for m in sent]
+
+    thread = load_history(config.CHAT_PATH)
+    messages = persona.chat_messages(thread[-MAX_HISTORY * 2:] + user, sticker_meaning)
+    system = persona.build_chat_prompt(settings.get("user_name", ""), language, stickers.prompt_list(),
+                                       context=persona.call_context(load_history()))
+
+    async def events():
+        line, kept = "", []
+
+        async def bubble(raw: str):
+            b = persona.parse_chat_line(raw)
+            if not b:
+                return None
+            if b["kind"] == "voice":
+                b["file"], secs = await record_voice(b["ja"], b["emotion"])
+                if not b["file"]:   # no voice to be had: say it in writing instead
+                    b = {"kind": "text", "emotion": b["emotion"], "text": b["sub"]}
+            out = bubble_out(b)
+            if out is None:
+                return None
+            if out["kind"] == "voice":
+                out["seconds"] = secs
+            kept.append(persona.format_chat(b if b["kind"] != "sticker" else {**b, "name": out["id"]}))
+            return sse("message", out)
+
+        try:
+            async for chunk in stream_chat(settings, system, messages):
+                line += chunk
+                while "\n" in line:
+                    done, line = line.split("\n", 1)
+                    ev = await bubble(done)
+                    if ev:
+                        yield ev
+            ev = await bubble(line)
+            if ev:
+                yield ev
+        except LLMError as e:
+            save_history(thread + user, config.CHAT_PATH, CHAT_KEEP)   # keep what the user sent
+            yield sse("error", {"message": str(e)})
+            return
+        except Exception as e:  # network errors etc.
+            save_history(thread + user, config.CHAT_PATH, CHAT_KEEP)
+            yield sse("error", {"message": f"{type(e).__name__}: {e}"})
+            return
+        reply = {"role": "assistant", "content": "\n".join(kept), "ts": int(time.time() * 1000)}
+        save_history(thread + user + ([reply] if kept else []), config.CHAT_PATH, CHAT_KEEP)
+        yield sse("done", {})
+
+    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/text/history")
+async def text_history():
+    out = []
+    for m in load_history(config.CHAT_PATH):
+        ts = m.get("ts")
+        if m["role"] == "user":
+            sid = persona.user_sticker(m["content"])
+            s = stickers.find(sid) if sid else None
+            out.append({"role": "user", "ts": ts, **({"kind": "sticker", "id": s["id"], "url": s["url"]} if s else
+                                                      {"kind": "text", "text": m["content"]})})
+        else:
+            for b in persona.chat_bubbles(m["content"]):
+                shown = bubble_out(b)
+                if shown:
+                    out.append({"role": "assistant", "ts": ts, **shown})
+    return out
+
+
+@app.get("/api/stickers")
+async def sticker_list():
+    return stickers.load()
+
+
+@app.get("/api/voicemsg/{name}")
+async def voice_message(name: str):
+    path = config.VOICE_DIR / Path(name).name   # a bare file name, nothing else
+    if not path.is_file():
+        raise HTTPException(404, "No such voice message")
+    return FileResponse(path, media_type="audio/wav" if path.suffix == ".wav" else "audio/mpeg")
 
 
 # ---------- voice jobs: started from the chat stream, fetched by id ----------
@@ -227,7 +386,11 @@ async def get_history():
 
 @app.post("/api/reset")
 async def reset():
+    """Erase her memory: the call, the text chat and its voice messages."""
     save_history([])
+    save_history([], config.CHAT_PATH)
+    for f in config.VOICE_DIR.glob("*") if config.VOICE_DIR.exists() else []:
+        f.unlink(missing_ok=True)
     return {"ok": True}
 
 
