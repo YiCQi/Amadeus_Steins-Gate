@@ -105,7 +105,7 @@ class Motion {
   }
 
   // Motion that belongs to an expression itself, too quick for the pose springs: laughing
-  // shakes her, fury trembles, sulking mumbles under her breath, a puzzled head rocks.
+  // shakes her, anger lands with a shudder, sulking mumbles under her breath, a puzzled head rocks.
   live(out, t, since, silent) {
     const name = this.poseName, s = this.seed;
     if (name === "laugh") {
@@ -114,10 +114,11 @@ class Motion {
       out.angleZ += 0.35 * a * Math.sin(ph);
       out.hairY += 2.5 * a * Math.abs(Math.sin(ph));
       if (silent) out.mouthOpen += 0.12 * Math.abs(Math.sin(ph));
-    } else if (name === "furious" || (name === "angry" && since < 1.2)) {
-      const a = name === "furious" ? 1 : 0.5 * (1 - since / 1.2);
-      out.angleZ += a * (0.7 * Math.sin(2 * Math.PI * 9.3 * t) + 0.35 * Math.sin(2 * Math.PI * 13.7 * t + 1));
-      out.bodyX += a * 1.4 * Math.sin(2 * Math.PI * 10.9 * t);
+    } else if (name === "furious" || name === "angry") {
+      // a short shudder as it lands, gone within a second
+      const a = (name === "furious" ? 0.5 : 0.25) * Math.exp(-since / 0.35);
+      out.angleZ += a * (0.7 * Math.sin(2 * Math.PI * 7.1 * t) + 0.3 * Math.sin(2 * Math.PI * 10.3 * t + 1));
+      out.bodyX += a * 0.8 * Math.sin(2 * Math.PI * 8.3 * t);
     } else if (name === "pout" && silent) {
       // bursts of mumbling a few times a minute, a few quick syllables each
       const burst = smoothstep(0.55, 0.9, Math.sin(2 * Math.PI * 0.42 * t + s));
@@ -136,12 +137,12 @@ class Motion {
     for (const [k, [rest]] of Object.entries(PARAMS)) target[k] = pose[k] ?? rest;
 
     // her mood underneath whatever she's showing: in a good mood the corners of her mouth sit
-    // a little higher and her eyes soften; in a bad one it shows in her brows and heavier lids
+    // a little higher and her eyes soften; in a bad one it shows in her mouth and brows. Never in
+    // heavier lids: at rest those read as sleepy, not as cross.
     const md = this.mood - 0.55;
-    target.mouthForm += 0.6 * md;
-    target.eyeSmile += 0.4 * Math.max(0, md - 0.05);
-    target.browAngle += 0.6 * Math.max(0, -md - 0.05);
-    target.eyeOpen -= 0.3 * Math.max(0, -md - 0.15);
+    target.mouthForm += 0.5 * md;
+    target.eyeSmile += 0.3 * Math.max(0, md - 0.05);
+    target.browAngle += 0.4 * Math.max(0, -md - 0.05);
 
     // idle: slow head drift, so she never freezes
     target.angleX += 2.4 * Math.sin(0.29 * t + s) + 1.1 * Math.sin(0.83 * t + 2 * s);
@@ -354,7 +355,7 @@ class Rig {
       m.lock = new Float32Array(3 * m.n);
       const root = F.top;
       const tip = m.rect[1] + m.rect[3];
-      const reach = m.tag === "front hair" ? 0.8 : 1;
+      const reach = 0.9;   // the same for front and back hair, so where they overlap they swing together
       for (let k = 0; k < m.n; k++) {
         const x = m.rest[2 * k], y = m.rest[2 * k + 1];
         const t = clamp((y - root) / Math.max(tip - root, 1), 0, 1);

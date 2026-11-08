@@ -3,6 +3,7 @@ import { setLang, t } from "./i18n.js";
 import { timeline } from "./lipsync.js";
 import { HandsFree } from "./call.js";
 import { Chat } from "./chat.js";
+import { ChatSearch } from "./search.js";
 import { MemoryPanel } from "./memory.js";
 
 const $ = s => document.querySelector(s);
@@ -74,7 +75,8 @@ function initAudio() {
 }
 
 // Fetch and decode one line of voice; null (plus a one-time toast) if it fails.
-async function fetchAudio(path, opts, gen) {
+// quiet: a retry follows, so no warning yet
+async function fetchAudio(path, opts, gen, quiet = false) {
   try {
     const r = await api(path, opts);
     const buf = await audioCtx.decodeAudioData(await r.arrayBuffer());
@@ -85,9 +87,21 @@ async function fetchAudio(path, opts, gen) {
     return buf;
   } catch (e) {
     // a reply interrupted by a newer message cancels its voices: not worth a warning
-    if (!voiceWarned && gen === generation) { toast(t("voiceDown", e.message), 7000); voiceWarned = true; }
+    if (gen === generation) console.warn("[voice]", path, e.message);
+    if (!quiet && !voiceWarned && gen === generation) { toast(t("voiceDown", e.message), 7000); voiceWarned = true; }
     return null;
   }
+}
+
+// A line's voice, started on the server as soon as its Japanese was written. If that fails, it
+// is asked for once more on its own before the line goes unvoiced.
+async function lineVoice(data, gen) {
+  const buf = await fetchAudio(`/api/voice/${data.id}`, {}, gen, true);
+  if (buf || gen !== generation) return buf;
+  return fetchAudio("/api/tts", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: data.ja, emotion: data.emotion || "neutral" }),
+  }, gen);
 }
 
 // kana: the line's reading, so the mouth can take each mora's shape (lipsync.js)
@@ -140,8 +154,9 @@ const PAUSE_MOOD = { thinking: 1.3, sad: 1.25, puzzled: 1.2, pout: 1.15, smug: 1
   laugh: 0.85, surprised: 0.85, annoyed: 0.8, angry: 0.75, furious: 0.65 };
 function linePause(prev, next) {
   const end = (prev.ja || "").trim(), start = (next.ja || "").trim();
-  let s = /[…‥]$|\.\.\.$/.test(end) ? 0.85 : /[？?]$/.test(end) ? 0.56 : /[！!]$/.test(end) ? 0.34 : 0.56;
-  if (/^[…‥]|^\.\.\./.test(start)) s += 0.35;  // she hesitates before this one
+  let s = /[…‥]$|\.\.\.$/.test(end) ? 1.25 : /[？?]$/.test(end) ? 0.9 : /[！!]$/.test(end) ? 0.55 : 0.8;
+  if (/^[…‥]|^\.\.\./.test(start)) s += 0.5;   // she hesitates before this one
+  s += Math.min(0.3, end.length * 0.012);         // and draws breath after a long one
   return s * (PAUSE_MOOD[next.emotion] ?? 1) * (0.85 + Math.random() * 0.3);
 }
 
@@ -164,14 +179,15 @@ function makeQueue() {
   };
 }
 
-async function converse({ message, event }) {
+// event: "connect" (the call just started) or "idle" (the line has gone quiet, idle s: she may speak up)
+async function converse({ message, event, idle }) {
   stopSpeaking();
   const gen = generation;
   initAudio();
   if (audioCtx.state === "suspended") await audioCtx.resume();
 
-  if (message) addLog({ role: "user", sub: message });
-  setStatus("thinking");
+  if (message) { addLog({ role: "user", sub: message }); heard(); nudges = 0; }
+  if (event !== "idle") setStatus("thinking");   // speaking up unasked: no tell-tale pause first
   const t0 = performance.now();
   const timing = {};
 
@@ -228,7 +244,7 @@ async function converse({ message, event }) {
     const r = await api("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, event }),
+      body: JSON.stringify({ message, event, idle }),
     });
     const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
     let buf = "";
@@ -245,7 +261,7 @@ async function converse({ message, event }) {
         if (ev === "voice") {
           const item = { ...data };
           item.sub = new Promise(r => (item.resolveSub = r));
-          item.voice = data.ja ? fetchAudio(`/api/voice/${data.id}`, {}, gen) : Promise.resolve(null);
+          item.voice = data.ja ? lineVoice(data, gen) : Promise.resolve(null);
           lines.set(data.id, item);
           queue.push(item);
         } else if (ev === "segment") {
@@ -266,7 +282,8 @@ async function converse({ message, event }) {
       }
     }
   } catch (e) {
-    toast(t("amadeusErr", e.message), 8000);
+    if (event === "idle") console.warn("[call] she didn't get to speak up:", e.message);
+    else toast(t("amadeusErr", e.message), 8000);
     setStatus("online");
   } finally {
     // a line cut off before its subtitle arrived still shows its Japanese
@@ -277,7 +294,37 @@ async function converse({ message, event }) {
   if (gen === generation && timing.firstAudio) logTiming(timing);
   // she said her last word and hung up: a beat of silence, then the line goes dead
   if (hangup && gen === generation && connected) { await sleep(900); if (gen === generation) endCall("kurisu"); }
+  else if (gen === generation) armIdle();
 }
+
+// ---------------------------------------------------------------- when the line goes quiet
+// Now and then she speaks up herself (server/persona.py IDLE_CALL); after a long silence she may hang up.
+
+const CALL_IDLE = [25, 45], CALL_IDLE_MAX = 3;   // s of silence before she might; times in a row, unanswered
+let idleTimer, nudges = 0, quietSince = 0;
+
+function heard() {              // the user did something: the silence starts over
+  quietSince = Date.now();
+  clearTimeout(idleTimer);
+}
+
+function armIdle() {
+  clearTimeout(idleTimer);
+  if (!connected || nudges >= CALL_IDLE_MAX) return;
+  const [lo, hi] = CALL_IDLE;
+  idleTimer = setTimeout(nudge, (lo + Math.random() * (hi - lo)) * (1 + 0.5 * nudges) * 1000);
+}
+
+function nudge() {
+  if (!connected) return;
+  const busy = currentSource || recorder || recognition || callBtn.classList.contains("hearing") ||
+    statusEl.dataset.state !== "online" || input.value.trim();
+  if (!settings.model || settings.idle_talk === false || busy) { armIdle(); return; }
+  nudges++;
+  converse({ event: "idle", idle: Math.round((Date.now() - quietSince) / 1000) });
+}
+
+input.addEventListener("input", heard);
 
 function logTiming(tm) {
   const f = v => (v == null ? "–" : Number(v).toFixed(1));
@@ -340,6 +387,7 @@ mic.onclick = async () => {
   if (recorder) { recorder.stop(); return; }
   if (recognition) { recognition.stop(); return; }
   stopSpeaking();
+  heard();
   if (settings.stt_mode === "browser") return startBrowserSTT();
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
@@ -353,7 +401,7 @@ mic.onclick = async () => {
       mic.classList.add("busy");
       const text = await transcribe(new Blob(chunks, { type: chunks[0]?.type || "audio/webm" }), "speech.webm");
       mic.classList.remove("busy");
-      if (text) converse({ message: text });
+      if (text) converse({ message: text }); else armIdle();
     };
     recorder.start();
     mic.classList.add("rec");
@@ -372,14 +420,15 @@ const call = new HandsFree({
   isBusy: () => !!currentSource,
   onSpeechStart: () => {
     if (currentSource) stopSpeaking();
+    heard();
     callBtn.classList.add("hearing");
     setStatus("listening");
   },
   onUtterance: async wav => {
     callBtn.classList.remove("hearing");
-    if (!wav) { if (statusEl.dataset.state === "listening") setStatus("online"); return; }
+    if (!wav) { if (statusEl.dataset.state === "listening") setStatus("online"); armIdle(); return; }
     const text = await transcribe(wav, "speech.wav", true);
-    if (text) converse({ message: text });
+    if (text) converse({ message: text }); else armIdle();
   },
 });
 
@@ -494,8 +543,11 @@ const chat = new Chat({
   onCall: () => startCall(),
   onSettings: () => { fillForm(); dlg.showModal(); },
   onMemory: () => memoryPanel.open(),
+  onFind: () => search.open(),
   onMood: v => avatar.setMood?.(v),
 });
+const search = new ChatSearch({ api, toast, jump: (params, bi) => chat.jump(params, bi) });
+window.amadeus.chat = chat;
 
 function setMode(mode) {
   $("#phone").dataset.mode = mode;
@@ -518,6 +570,8 @@ async function endCall(by) {
   if (!connected) { setMode("chat"); return; }
   connected = false;
   greeted = false;
+  clearTimeout(idleTimer);
+  nudges = 0;
   stopSpeaking();
   if (call.active) { call.stop(); callBtn.classList.remove("live", "hearing"); mic.disabled = false; }
   hideSubtitle();
@@ -535,7 +589,7 @@ async function endCall(by) {
   $("#connect").disabled = false;
   $("#avatar").classList.remove("on");
   setMode("chat");
-  if (chat.loaded) chat.render(rec);
+  if (chat.loaded) chat.live(rec);
 }
 
 $("#btn-hangup").onclick = () => endCall("user");
@@ -592,6 +646,7 @@ async function bootLog(lines) {
 
 $("#connect").onclick = async () => {
   $("#connect").disabled = true;
+  voiceWarned = false;   // a voice that fails gets said once per call, not once per page
   initAudio();
   await audioCtx.resume();
   const st = await api("/api/status").then(r => r.json()).catch(() => ({}));
@@ -607,6 +662,7 @@ $("#connect").onclick = async () => {
   setStatus(st.tts_enabled === undefined ? "offline" : "online");
   connected = true;
   callStart = Date.now();
+  heard();
   if (!settings.model) {
     toast(t("needApi"), 6000);
     fillForm();

@@ -32,8 +32,11 @@ async def stream_chat(settings: dict, system: str, messages: list[dict]) -> Asyn
         gen = _stream_anthropic(settings, system, messages)
     else:
         gen = _stream_openai(settings, system, messages)
-    async for chunk in gen:
-        yield chunk
+    try:
+        async for chunk in gen:
+            yield chunk
+    finally:   # stopped early (enough said): close the connection now, so the model stops too
+        await gen.aclose()
 
 
 async def _stream_openai(s: dict, system: str, messages: list[dict]) -> AsyncIterator[str]:

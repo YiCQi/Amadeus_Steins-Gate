@@ -2,11 +2,15 @@
 # 等号后面的说明是给语言模型看的，写清楚这张表情的意思、适合什么场合，她就会在合适的时候发。
 # 想加新表情：把图片（png / gif / webp / jpg）放进这个文件夹，再在下面加一行。
 # 不写说明也行，那样文件名本身就是它的意思（比如「无语.png」）。
+# 什么场合发写在括号里（比如「（被夸的时候）」）：她挑自己的表情时会看；你发给她时，她只看括号外的意思，
+# 当成一种语气，不会去分析它。
 # 以 # 开头的行是注释。改完不用重启，下一条消息就生效。
 #
 # Kurisu's stickers: one per line, "file = when to send it". The text after = is for the
 # language model. To add one, drop an image (png / gif / webp / jpg) into this folder and
-# add a line here; without a line, the file name is its meaning. No restart needed.
+# add a line here; without a line, the file name is its meaning. Put when to send it in
+# brackets: she reads that when picking hers, but when you send one she gets only the part
+# outside them, as a tone, not something to analyse. No restart needed.
 
 hentai.webp = 骂对方变态，一脸嫌弃（对方说了下流或奇怪的话）
 ha.webp = は？——不可理喻，你在说什么

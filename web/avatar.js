@@ -25,7 +25,6 @@ export const FX_SVG = `
 <svg class="qmark" viewBox="0 0 60 90"><path d="M14 26 Q14 6 31 6 Q48 6 48 24 Q48 36 34 44 Q29 48 29 60"/><circle cx="29" cy="78" r="6"/></svg>
 <svg class="moya" viewBox="0 0 120 50"><path d="M6 30 C14 6 24 46 34 22 S52 44 62 20 S82 46 92 22 S110 40 114 26"/><path d="M20 40 C28 26 38 52 48 34 S66 50 76 34"/></svg>
 <svg class="steam" viewBox="0 0 200 60"><path d="M8 52 Q2 36 16 32 Q14 16 30 18 Q36 4 50 14 Q60 8 62 22 Q72 26 64 40 Q60 52 46 48 Q36 58 24 50 Q14 58 8 52Z"/><path d="M192 52 Q198 36 184 32 Q186 16 170 18 Q164 4 150 14 Q140 8 138 22 Q128 26 136 40 Q140 52 154 48 Q164 58 176 50 Q186 58 192 52Z"/></svg>
-<svg class="sweat" viewBox="0 0 40 60"><path d="M20 3 Q35 30 35 41 A15 15 0 0 1 5 41 Q5 30 20 3Z"/><path class="shine" d="M12 40 Q12 34 16 30"/></svg>
 `;
 
 export class Avatar {

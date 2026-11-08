@@ -74,17 +74,24 @@
     <section id="chat" aria-label="Chat">
       <header class="chat-head">
         <button type="button" id="chat-settings" class="chat-btn" data-i18n-title="settings" title="Settings" aria-label="Settings">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
         </button>
         <button type="button" id="chat-memory" class="chat-btn" data-i18n-title="mem.open" title="Her memory" aria-label="Her memory">
           <svg viewBox="0 0 24 24"><path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V5a2 2 0 0 0-3-1zM15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1"/></svg>
         </button>
         <div class="chat-title"><b data-i18n="chatName">Makise Kurisu</b><small id="chat-status"></small></div>
+        <button type="button" id="chat-find" class="chat-btn" data-i18n-title="find" title="Search chat history" aria-label="Search chat history">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+        </button>
         <button type="button" id="chat-call" class="chat-btn" data-i18n-title="videoCall" title="Video call" aria-label="Video call">
           <svg viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>
         </button>
       </header>
-      <ol id="chat-list" aria-live="polite"></ol>
+      <div class="chat-scroll">
+        <ol id="chat-list" aria-live="polite"></ol>
+        <div id="chat-loading" hidden data-i18n="chatLoading">Loading…</div>
+        <button type="button" id="chat-latest" hidden><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg><span></span></button>
+      </div>
       <div id="sticker-panel" hidden></div>
       <form id="chat-bar" autocomplete="off">
         <button type="button" id="chat-mic" class="chat-btn" data-i18n-title="mic" title="Speak" aria-label="Microphone">
@@ -96,6 +103,29 @@
         </button>
         <button type="submit" id="chat-send" data-i18n="send">Send</button>
       </form>
+
+      <!-- searching the chat history (search.js) -->
+      <div id="find" hidden>
+        <header class="find-head">
+          <button type="button" id="find-back" class="chat-btn" data-i18n-title="back" title="Back" aria-label="Back">
+            <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>
+          </button>
+          <input id="find-input" type="search" data-i18n-ph="findPh" placeholder="Search" enterkeyhint="search" autocomplete="off">
+        </header>
+        <div class="find-tools">
+          <button type="button" data-kind="voice" data-i18n="findVoice">Voice</button>
+          <button type="button" data-kind="sticker" data-i18n="findSticker">Stickers</button>
+          <button type="button" data-kind="call" data-i18n="findCall">Calls</button>
+          <span class="spacer"></span>
+          <button type="button" id="find-day">
+            <svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>
+            <span data-i18n="findDate">By date</span>
+          </button>
+          <input type="date" id="find-date" tabindex="-1" aria-hidden="true">
+        </div>
+        <p id="find-note"></p>
+        <ol id="find-list"></ol>
+      </div>
     </section>
   </main>
 
@@ -146,6 +176,7 @@
           </select>
         </label>
         <label class="check"><input name="show_japanese" type="checkbox"> <span data-i18n="set.showJa">Show Japanese line under subtitles</span></label>
+        <label class="check"><input name="idle_talk" type="checkbox"> <span data-i18n="set.idleTalk">When it goes quiet, she may speak up first</span></label>
       </fieldset>
 
       <p id="settings-msg" class="muted"></p>

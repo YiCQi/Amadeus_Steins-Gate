@@ -20,6 +20,16 @@ max_history = 30      # conversation turns sent to the model
 name = ""
 language = "en"       # subtitle / conversation language: "en" or "zh" (voice is always Japanese)
 
+[news]
+# When a conversation goes quiet she sometimes speaks up on her own, and may bring up something
+# she read today: a few headlines from these RSS / Atom feeds, fetched at most once an hour.
+# enabled = false: no news (she still speaks up; turn that off in the app's settings).
+enabled = true
+feeds = [
+  "https://www.sciencedaily.com/rss/mind_brain.xml",   # neuroscience, her field
+  "https://www3.nhk.or.jp/rss/news/cat0.xml",          # NHK headlines
+]
+
 [stt]
 mode = "local"        # "local" = faster-whisper on your GPU, "browser" = Chrome/Edge Web Speech API
 model = "small"       # tiny / base / small / medium / large-v3

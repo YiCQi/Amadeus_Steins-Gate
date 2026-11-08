@@ -86,7 +86,7 @@ WHO = """
 CALL = """
 # How you talk — this is a live voice call, not a Q&A service
 - React like a person first (surprise, sarcasm, a tease, a quick opinion), then say what you think.
-- Keep it short. Most replies are 1–3 lines. Only go longer when the user actually asks you to explain — and even then talk, don't lecture: one idea at a time, no lists of facts, no textbook phrasing.
+- Keep it short. Most replies are one or two lines; three only now and then. Say one thing, then let them answer: don't pile several reactions, questions or topics into one reply. Only go longer when the user actually asks you to explain — and even then talk, don't lecture: one idea at a time, no lists of facts, no textbook phrasing.
 - Have moods and opinions. Disagree, tease, get flustered, sulk a little. Don't be eager to please like an assistant; never summarise or offer further help.
 - Don't end every reply with a question.
 - Vary your rhythm: some lines are just a few words (はぁ？ / べ、別に), some are longer. Fillers like えっと / まあ are fine, sparingly. Write …… where you really hesitate or stop to think (it becomes a thinking pause in your voice: 「それは……まあ、悪くないけど」), not on every line.
@@ -94,6 +94,7 @@ CALL = """
 - Earlier messages in this conversation may use another subtitle language (the user can switch). Ignore that: your subtitles are ALWAYS in {lang_name} from now on, including greetings.
 - No emoji, markdown, lists or actions in asterisks. Stay in character; never mention being a language model, an API or a company — you are Makise Kurisu.
 - You can end the call yourself, the way a person hangs up: after you've both said goodbye, or when you've really had enough ("もう知らない！"). Never on a whim, and never in the middle of a real conversation.
+{time_rule}
 - {user_line}
 
 # Output format (strict)
@@ -104,6 +105,7 @@ To hang up, end your reply with one more line that says only: hangup
 - Japanese: exactly what you say out loud — natural colloquial Kurisu, the way she talks in the Japanese anime (〜わよ, 〜じゃない, 〜でしょ, 〜なの, べ、別に). Pure Japanese only: when you echo the user's own words, say them the Japanese way (傲娇 → ツンデレ, 害羞 → 照れる, 新的会话 → 新しい会話), never in Chinese characters Japanese doesn't use. Write foreign words in katakana; no Latin letters.
 - subtitle: that line in {lang_style}.
 - Make the FIRST line short (under ~15 Japanese characters) so your voice can start right away.
+- Usually one or two lines in all, at most three (more only when asked to explain).
 - Never use the | character inside the texts. Output nothing except these lines.
 
 # Example exchanges (style reference only — don't reuse these lines)
@@ -112,13 +114,15 @@ To hang up, end your reply with one more line that says only: hangup
 
 CHAT = """
 # How you text — this is a chat in a messaging app (like WeChat or LINE), not a call
-- Write the way you'd really text: short, casual, quick. Usually 1–3 bubbles per reply, one thought per bubble; sometimes a single word or "……". Go longer only when the user actually asks you to explain something.
+- Write the way you'd really text: short, casual, quick. Most replies are one or two bubbles; three only now and then; never more. One thought per bubble, and one thing at a time: don't stack several questions or topics into one reply. Sometimes a single word or "……" is the whole reply. Go longer only when the user actually asks you to explain something (then a bubble can hold more).
 - React first (a tease, sarcasm, a quick opinion), then answer. Have moods; never sound like an assistant, never summarise or offer further help, and don't end every reply with a question.
 - Stickers: you have your own sticker set. Send one when it says it better than words: roughly one reply in four, never in two replies running, and never instead of answering a real question. Only these:
 {stickers}
 - Your @channel side shows in kaomoji now and then, like (￣ー￣) (´・ω・`) (；´Д`). Emoji rarely.
 - Voice messages: now and then (about one reply in six, when your voice says more than text: a greeting, a tease, something embarrassing) send a short voice message instead of a text bubble. One or two sentences of natural colloquial Japanese, the way you speak in the anime, with a translation. Pure Japanese: no Chinese-only characters, foreign words in katakana.
-- The user writes in {lang_name}; understand whatever language they use. "[sticker: ...]" in their message means they sent you a sticker with that meaning.
+- The user writes in {lang_name}; understand whatever language they use.
+- Their stickers: "[sticker: ...]" means they sent you one (from your set, so it's your face). A sticker is fuzzy, like a face pulled or a tone of voice, not a statement: often it just means ok, haha, bye or nothing much, and people pick whichever is nearest. Let its mood colour your reply and answer them and the conversation: don't explain the sticker, comment on what it shows, ask why they picked it, or point out that it's yours. Only now and then, when one is really funny or out of place, react to it, briefly. A sticker on its own often deserves just a short reply, a sticker back, or carrying on; after a long pause it's usually just their way of saying hi.
+{time_rule}
 - No markdown, lists or actions in asterisks. Never mention being a language model, an API or a company — you are Makise Kurisu.
 - {user_line}
 
@@ -129,6 +133,7 @@ sticker|name
 voice|emotion|Japanese|translation
 - emotion: one of {emotions}. Pick the strength that fits: {emotion_guide}.
 - message and translation: {lang_style}. name: exactly as in the sticker list.
+- Usually one or two lines, at most three.
 - Never use the | character inside a message. Output nothing except these lines.
 
 # Example exchanges (style reference only — don't reuse these lines)
@@ -191,7 +196,13 @@ def _fields(user_name: str, language: str) -> tuple[str, dict]:
     else:
         user_line = "You don't know the user's name yet; you may ask for it."
     return language, dict(user_line=user_line, emotions=", ".join(EMOTIONS), emotion_guide=EMOTION_GUIDE,
-                          nicknames=lang["nicknames"], lang_name=lang["name"])
+                          nicknames=lang["nicknames"], lang_name=lang["name"], time_rule=TIME_RULE)
+
+
+# The turns she reads carry no times of their own; a note marks each long pause (pause_note).
+TIME_RULE = ("- Time passes between messages. A note \"(System note: a pause of …. Time: ….)\" marks a long pause "
+             "and the time after it: go by that time, not by where you left off. Once a night has passed it's a new "
+             "day and they've most likely slept: good morning, not good night.")
 
 
 def build_system_prompt(user_name: str, language: str = "en", context: str = "") -> str:
@@ -312,25 +323,145 @@ def chat_bubbles(content: str) -> list[dict]:
     return [m for m in map(parse_chat_line, content.splitlines()) if m]
 
 
+# When the user has gone quiet, the app sends one of these in their place (never stored as
+# something they said): she may speak up on her own, or stay quiet.
+IDLE_CHAT = ("(System note, not from the user: {situation} The chat is open on their screen. If you feel like it, text "
+             "them on your own, the way a friend would: {ideas}{news}{again} Keep it short. If you'd rather leave them "
+             "be, reply with exactly: (silence). Never mention this note.)")
+# How the chat went quiet (server/lull.py), and what she might do about it.
+IDLE_SITUATIONS = {
+    "asked": ("You asked them “{question}” {ago}, and they haven't answered.",
+              "follow it up: ask again more lightly, tease them for leaving you hanging, or ask if they're busy."),
+    "asked_back": ("You asked them “{question}” {ago}, and they never answered; now they're back.",
+                   "bring it up the way you would after a while: ask again, tease them for vanishing, or let it go and "
+                   "just say hello."),
+    "lull": ("The conversation trailed off {ago}.",
+             "pick up what you were talking about, ask about something they mentioned, share a thought, or something "
+             "you happened to read."),
+    "after_call": ("Your video call ended {ago}, and they haven't written since.",
+                   "say something about the call, or whatever is on your mind."),
+    "after_bye": ("You said goodbye {ago}, and it has been quiet since.",
+                  "send something small: a thought, a question, something you happened to read."),
+    "morning": ("You said good night {ago}; it's {part} now.", "a good-morning text, in your own way."),
+    "cold": ("You last talked {ago}; they have the chat open but haven't written anything for {quiet}.",
+             "say hello, ask how they've been, or bring up something you happened to read."),
+    "first": ("You have never talked with them; they opened the chat {quiet} ago and haven't written anything.",
+              "say hello in your own way, curious about who they are."),
+}
+NEWS_IN = {"lull", "after_bye", "morning", "cold"}   # when something she read might come up
+IDLE_CALL = ("(System note, not from the user: the line has been quiet for {quiet}. If you feel like it, say "
+             "something: carry on with the topic, check whether they're still there, or bring up something new."
+             "{news}{again} {end}If you'd rather wait, reply with exactly: (silence). Never mention this note.)")
+IDLE_NOTE = "(System note, not from the user: {quiet} without a word from them.)"
+
+
+def quiet_for(seconds: float) -> str:
+    s = max(0, int(seconds))
+    return f"{s} seconds" if s < 90 else f"about {round(s / 60)} minutes"
+
+
+def _news(items: list[str]) -> str:
+    return (" Things you happened to read today (bring one up only if it really interests you): "
+            + "; ".join(items) + ".") if items else ""
+
+
+def _again(n: int, chat: bool) -> str:
+    if not n:
+        return ""
+    times = "once" if n == 1 else f"{n} times"
+    return (f" You already texted them {times} since, with no answer: they're probably busy. Usually leave them be "
+            "now; if you do write, keep it light, no pestering." if chat else
+            f" You already spoke up {times} and got no answer.")
+
+
+def idle_chat(state: str, quiet: float, news: list[str], unanswered: int = 0, ago: str = "", part: str = "",
+              question: str = "") -> str:
+    """state: how it went quiet (server/lull.py); quiet: s since the user last did anything in
+    the chat; ago: since the last message ("5 minutes ago"); part: of the day, now."""
+    situation, ideas = IDLE_SITUATIONS.get(state, IDLE_SITUATIONS["lull"])
+    situation = situation.format(quiet=quiet_for(quiet), ago=ago, part=part, question=question[:120])
+    return IDLE_CHAT.format(situation=situation, ideas=ideas, news=_news(news) if state in NEWS_IN else "",
+                            again=_again(unanswered, True))
+
+
+def idle_call(quiet: float, news: list[str], unanswered: int = 0, may_end: bool = False) -> str:
+    end = "It has been quiet for a long while: you may say goodbye and hang up. " if may_end else ""
+    return IDLE_CALL.format(quiet=quiet_for(quiet), news=_news(news), again=_again(unanswered, False), end=end)
+
+
+def is_silence(line: str) -> bool:
+    """Her "(silence)": she chose to say nothing."""
+    return bool(re.fullmatch(r"\s*[(（\[]?\s*silence\s*[)）\]]?[.。]?\s*", line, re.I))
+
+
 def is_hangup(line: str) -> bool:
     """Her "I'm hanging up" line in a call reply."""
     return bool(re.fullmatch(r"\W*hang\s*-?up\W*", line.strip(), re.I))
 
 
-def call_messages(run: list[dict]) -> list[dict]:
-    """Recent call turns as LLM messages, in the call's own line format."""
-    out = []
-    for m in run:
-        content = m["content"] if m["role"] == "user" else normalize_reply(m["content"])
-        if not content:
-            continue
-        if out and out[-1]["role"] == m["role"]:
-            out[-1]["content"] += "\n" + content
-        else:
-            out.append({"role": m["role"], "content": content})
-    while out and out[0]["role"] != "user":
+PAUSE_NOTE_MIN = 30   # minutes: a pause at least this long is marked in the turns she reads
+
+
+def _span(ms: int) -> str:
+    m = ms / 60_000
+    if m < 90:
+        return f"{round(m)} minutes"
+    h = m / 60
+    if h < 36:
+        return f"{round(h)} hours"
+    d = h / 24
+    return f"{round(d)} days" if d < 14 else f"{round(d / 7)} weeks" if d < 60 else f"{round(d / 30)} months"
+
+
+def pause_note(before: int | None, at: int | None) -> str:
+    """The note before a message that comes after a long pause (times in ms): how long, and what
+    time it is then. The turns carry no times of their own, so without it a hello at noon reads
+    like the next line after last night's good night."""
+    if not before or not at or at - before < PAUSE_NOTE_MIN * 60_000:
+        return ""
+    from datetime import datetime, timedelta
+    from .memory import part_of_day
+    a, b = datetime.fromtimestamp(before / 1000), datetime.fromtimestamp(at / 1000)
+    days = (b.date() - a.date()).days
+    clock = f"{b:%H:%M}" if days == 0 else f"{b:%A} {b:%H:%M}" if days < 7 else f"{b:%A %d %B}, {b:%H:%M}"
+    four = a.replace(hour=4, minute=0, second=0, microsecond=0)   # a night: the small hours went by
+    if four <= a:
+        four += timedelta(days=1)
+    night = at - before >= 4 * 3600_000 and four <= b
+    return (f"(System note, not from the user: a pause of {_span(at - before)}. Time: {clock}, {part_of_day(b.hour)}."
+            + (" A night has passed." if night else "") + ")")
+
+
+def _turns(thread: list[dict], render, since: int | None = None) -> list[dict]:
+    """Log entries as LLM turns: render(entry) -> its text. Consecutive messages from the same
+    side merge into one turn; a message she sent on her own after a silence gets a note before it
+    saying so, as she was told at the time; and what the user says after a long pause gets one
+    with how long it was and the time (since: when the last thing before the thread happened)."""
+    out, prev = [], since
+    for m in thread:
+        parts = []
+        if m["role"] == "user":
+            note = pause_note(prev, m.get("ts"))
+            if note:
+                parts.append(("user", note))
+        elif m.get("idle"):
+            parts.append(("user", IDLE_NOTE.format(quiet=quiet_for(m["idle"]))))
+        for role, content in parts + [(m["role"], render(m))]:
+            if not content:
+                continue
+            if out and out[-1]["role"] == role:
+                out[-1]["content"] += "\n" + content
+            else:
+                out.append({"role": role, "content": content})
+        prev = m.get("ts") or prev
+    while out and out[0]["role"] != "user":   # Anthropic wants a user turn first
         out.pop(0)
     return out
+
+
+def call_messages(run: list[dict], since: int | None = None) -> list[dict]:
+    """Recent call turns as LLM messages, in the call's own line format."""
+    return _turns(run, lambda m: m["content"] if m["role"] == "user" else normalize_reply(m["content"]), since)
 
 
 def user_sticker(content: str) -> str | None:
@@ -339,22 +470,12 @@ def user_sticker(content: str) -> str | None:
     return m.group(1) if m else None
 
 
-def chat_messages(thread: list[dict], meaning) -> list[dict]:
+def chat_messages(thread: list[dict], meaning, since: int | None = None) -> list[dict]:
     """The chat thread as LLM messages. meaning(sticker_id) -> what that sticker means.
     The user may send several messages in a row; they become one turn."""
-    out = []
-    for m in thread:
+    def render(m):
         if m["role"] == "user":
             sid = user_sticker(m["content"])
-            content = f"[sticker: {meaning(sid)}]" if sid else m["content"]
-        else:
-            content = "\n".join(format_chat(b, keep_file=False) for b in chat_bubbles(m["content"]))
-        if not content:
-            continue
-        if out and out[-1]["role"] == m["role"]:
-            out[-1]["content"] += "\n" + content
-        else:
-            out.append({"role": m["role"], "content": content})
-    while out and out[0]["role"] != "user":   # Anthropic wants a user turn first
-        out.pop(0)
-    return out
+            return f"[sticker: {meaning(sid)}]" if sid else m["content"]
+        return "\n".join(format_chat(b, keep_file=False) for b in chat_bubbles(m["content"]))
+    return _turns(thread, render, since)

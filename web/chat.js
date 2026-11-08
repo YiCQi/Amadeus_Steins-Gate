@@ -1,6 +1,9 @@
 // Text chat with Kurisu, messaging-app style: her texts, her stickers (web/assets/stickers/,
 // see server/stickers.py), and now and then a Japanese voice message with its translation.
-// The server keeps the thread (data/chat.json); this page only shows it.
+// The server keeps the thread (server/memory.py). The page holds a stretch of it, a page at a
+// time: scrolling up loads older messages, a search result (search.js) opens it around that
+// message. When the chat goes quiet, she may text first: server/lull.py reads the conversation
+// to decide whether and when (not after a goodbye; soon after a question of hers you left hanging).
 
 import { t } from "./i18n.js";
 
@@ -9,6 +12,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const AVATAR = "assets/kurisu/chat_avatar.webp";
 const GAP = 5 * 60 * 1000;            // a time stamp goes between messages further apart than this
 const PLAYED_KEY = "amadeus.playedVoice";
+const PAGE = 40;                      // timeline entries loaded at a time
+const KEEP = 200;                     // entries the page holds; scrolling on lets the far end go
+const EDGE = 400;                     // px from either end at which the next page loads
+const MIN_QUIET = 120;                // s: she never texts first sooner than this after you last did anything here
 
 // Server-sent events of a fetch response, as {event, data}.
 async function* sseEvents(r) {
@@ -29,17 +36,25 @@ async function* sseEvents(r) {
 
 export class Chat {
   // api(path, opts) -> Response, toast(msg, ms), settings() -> current settings,
-  // onCall(): start a video call, onSettings(), onMemory(): open those, onMood(v): her mood changed
-  constructor({ api, toast, settings, onCall, onSettings, onMemory, onMood }) {
+  // onCall(): start a video call, onSettings(), onMemory(), onFind(): open those, onMood(v): her mood changed
+  constructor({ api, toast, settings, onCall, onSettings, onMemory, onFind, onMood }) {
     Object.assign(this, { api, toast, settings, onCall, onMood });
     this.list = $("#chat-list");
     this.input = $("#chat-input");
     this.status = $("#chat-status");
     this.panel = $("#sticker-panel");
+    this.latestBtn = $("#chat-latest");
+    this.loading = $("#chat-loading");
     this.lastTs = 0;
     this.busy = false;
     this.pending = [];                // what you sent while she was still replying
     this.loaded = false;
+    this.moreBefore = this.moreAfter = false;   // the thread goes on beyond what the page holds
+    this.paging = false;
+    this.fresh = 0;                   // her messages that came while you were reading further up
+    this.quietSince = Date.now();     // when you last did anything in the chat
+    this.unread = 0;
+    this.title = document.title;
     try { this.played = new Set(JSON.parse(localStorage.getItem(PLAYED_KEY) || "[]")); } catch { this.played = new Set(); }
 
     $("#chat-bar").addEventListener("submit", e => { e.preventDefault(); this.submit(); });
@@ -47,58 +62,211 @@ export class Chat {
       // Enter sends, Shift+Enter is a new line; never while an IME (Chinese input) is composing
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.submit(); }
     });
-    this.input.addEventListener("input", () => this.fit());
+    this.input.addEventListener("input", () => { this.fit(); this.quiet(); });
     $("#chat-sticker").onclick = () => this.togglePanel();
     $("#chat-call").onclick = () => onCall();
     $("#chat-settings").onclick = () => onSettings();
     $("#chat-memory").onclick = () => onMemory();
+    $("#chat-find").onclick = () => onFind();
     $("#chat-mic").onclick = () => this.mic();
     this.list.addEventListener("click", () => { this.panel.hidden = true; });
+    this.list.addEventListener("scroll", () => this.scrolled(), { passive: true });
+    this.latestBtn.onclick = () => this.latest();
+    // she texts whenever the chat is open, also in a background tab: the tab's title counts what's unread
+    addEventListener("focus", () => { this.unread = 0; document.title = this.title; });
   }
 
   async open() {
-    if (!this.loaded) await this.load();
-    this.scroll();
+    if (!this.loaded || this.moreAfter) await this.load(); else this.scroll();
+    this.quiet();
     if (matchMedia("(pointer: fine)").matches) this.input.focus();
   }
 
-  // Re-read the thread, e.g. after the memory was erased.
-  async load() {
-    try {
-      const hist = await (await this.api("/api/text/history")).json();
-      this.list.replaceChildren();
-      this.lastTs = 0;
-      for (const m of hist) this.render(m);
-      this.loaded = true;
-    } catch (e) {
-      this.toast(t("serverDown", e.message));
-    }
-  }
-
   setStatus(text) { this.status.textContent = text; }
-  scroll() { this.list.scrollTop = this.list.scrollHeight; }
+  scroll() { this.list.scrollTop = this.list.scrollHeight; this.fresh = 0; this.edges(); }
   fit() {
     this.input.style.height = "auto";
     this.input.style.height = Math.min(this.input.scrollHeight, 120) + "px";
     $("#chat-send").classList.toggle("ready", !!this.input.value.trim());
   }
 
-  // ---- showing messages
+  // ---- the stretch of the thread the page holds
 
-  stamp(ts) {
-    ts ||= Date.now();
-    if (ts - this.lastTs > GAP) {
-      const li = document.createElement("li");
-      li.className = "time";
-      li.textContent = formatTime(ts);
-      this.list.append(li);
-    }
-    this.lastTs = ts;
+  async page(params) {
+    return (await this.api(`/api/text/history?${new URLSearchParams({ limit: PAGE, ...params })}`)).json();
   }
 
-  render(m) {
-    this.stamp(m.ts);
+  // The newest messages: opening the chat, or back to the latest.
+  async load() {
+    try {
+      this.fill(await this.page({}));
+      this.loaded = true;
+      this.scroll();
+    } catch (e) {
+      this.toast(t("serverDown", e.message));
+    }
+  }
+
+  fill(p) {
+    this.list.replaceChildren(...p.items.map(m => this.item(m)));
+    this.moreBefore = p.more_before;
+    this.moreAfter = p.more_after;
+    this.fresh = 0;
+    this.restamp();
+  }
+
+  // Open the thread at a search result ({around: lid}, which bubble) or at a day ({date: "2026-11-03"}).
+  async jump(params, bi = 0) {
+    this.panel.hidden = true;
+    try {
+      const p = await this.page(params);
+      this.fill(p);
+      this.loaded = true;
+      const hit = this.list.querySelector(`li[data-lid="${p.target}"][data-bi="${bi}"]`) ||
+                  this.list.querySelector(`li[data-lid="${p.target}"]`);
+      if (!hit) { this.scroll(); return p; }
+      const stamp = hit.previousElementSibling?.classList.contains("time") ? hit.previousElementSibling : hit;
+      this.list.scrollTop = params.date ? stamp.offsetTop - 8 : hit.offsetTop - (this.list.clientHeight - hit.offsetHeight) / 2;
+      if (!params.date) {
+        hit.classList.add("found");
+        setTimeout(() => hit.classList.remove("found"), 2500);
+      }
+      this.edges();
+      return p;
+    } catch (e) {
+      this.toast(t("serverDown", e.message));
+      return null;
+    }
+  }
+
+  async latest() {
+    if (this.moreAfter) await this.load();
+    else this.list.scrollTo({ top: this.list.scrollHeight, behavior: "smooth" });
+    this.fresh = 0;
+    this.edges();
+  }
+
+  scrolled() {
+    const l = this.list;
+    if (l.scrollTop < EDGE) this.older();
+    if (l.scrollHeight - l.scrollTop - l.clientHeight < EDGE) this.newer();
+    this.edges();
+  }
+
+  // Near the top: the page before. Near the bottom of an older stretch: the page after.
+  async older() {
+    const first = this.list.querySelector("li[data-lid]");
+    if (this.paging || !this.moreBefore || !first) return;
+    await this.paged({ before: first.dataset.lid }, p => this.steady(() => {
+      this.list.prepend(...p.items.map(m => this.item(m)));
+      this.moreBefore = p.more_before;
+      this.trim("bottom");
+    }));
+  }
+
+  async newer() {
+    const withLid = this.list.querySelectorAll("li[data-lid]");
+    const last = withLid[withLid.length - 1];
+    if (this.paging || !this.moreAfter || !last) return;
+    await this.paged({ after: last.dataset.lid }, p => this.steady(() => {
+      this.list.append(...p.items.map(m => this.item(m)));
+      this.moreAfter = p.more_after;
+      this.trim("top");
+    }));
+  }
+
+  // Change what the page holds without moving what you're reading: the first message on
+  // screen stays exactly where it was (also when the browser had to clamp the scroll).
+  steady(change) {
+    const l = this.list, top = l.getBoundingClientRect().top;
+    const anchor = [...l.querySelectorAll("li.msg")].find(li => li.getBoundingClientRect().bottom > top);
+    const y = anchor?.getBoundingClientRect().top;
+    change();
+    this.restamp();
+    if (anchor?.isConnected) l.scrollTop += anchor.getBoundingClientRect().top - y;
+  }
+
+  async paged(params, apply) {
+    this.paging = true;
+    this.loading.hidden = false;
+    try {
+      apply(await this.page(params));
+    } catch (e) {
+      this.toast(t("serverDown", e.message));
+    } finally {
+      this.paging = false;
+      this.loading.hidden = true;
+      this.edges();
+    }
+  }
+
+  // Hold at most KEEP entries: the far end goes, to be loaded again when you scroll back to it.
+  trim(end) {
+    const lids = [...new Set([...this.list.querySelectorAll("li[data-lid]")].map(li => li.dataset.lid))];
+    if (lids.length <= KEEP) return;
+    const items = [...this.list.children];
+    if (end === "bottom") {
+      const keep = lids[KEEP - 1];
+      items.slice(items.findLastIndex(li => li.dataset.lid === keep) + 1).forEach(li => li.remove());
+      this.moreAfter = true;
+    } else {
+      const keep = lids[lids.length - KEEP];
+      items.slice(0, items.findIndex(li => li.dataset.lid === keep)).forEach(li => li.remove());
+      this.moreBefore = true;
+    }
+  }
+
+  // The "latest" pill, while the newest messages are out of sight.
+  edges() {
+    const l = this.list, below = l.scrollHeight - l.scrollTop - l.clientHeight;
+    if (!this.moreAfter && below < 60) this.fresh = 0;
+    this.latestBtn.hidden = !(this.moreAfter || this.fresh || below > l.clientHeight * 2);
+    this.latestBtn.querySelector("span").textContent = this.fresh ? t("chatNew", this.fresh) : t("chatLatest");
+  }
+
+  // ---- showing messages
+
+  // Time stamps above the first message and between ones further apart than GAP.
+  restamp() {
+    for (const s of this.list.querySelectorAll("li.time")) s.remove();
+    let last = 0;
+    for (const li of [...this.list.children]) {
+      const ts = Number(li.dataset.ts);
+      if (ts - last > GAP) li.before(this.stamp(ts));
+      last = ts;
+    }
+    this.lastTs = last;
+  }
+
+  stamp(ts) {
     const li = document.createElement("li");
+    li.className = "time";
+    li.textContent = formatTime(ts);
+    return li;
+  }
+
+  // A message as it happens (yours, hers, a call record): at the end of the thread when the
+  // page holds the newest messages, else counted on the "latest" pill. Returns its <li>, or null.
+  live(m) {
+    if (m.role === "assistant" && !document.hasFocus()) { this.unread++; document.title = `(${this.unread}) ${this.title}`; }
+    if (m.lid && this.list.querySelector(`li[data-lid="${m.lid}"]`)) return null;   // already there
+    if (this.moreAfter) { this.fresh++; this.edges(); return null; }
+    const l = this.list, atEnd = l.scrollHeight - l.scrollTop - l.clientHeight < 80;
+    const li = this.item(m);
+    const ts = Number(li.dataset.ts);
+    if (ts - this.lastTs > GAP) l.append(this.stamp(ts));
+    this.lastTs = ts;
+    l.append(li);
+    if (atEnd || m.role === "user") this.scroll(); else { this.fresh++; this.edges(); }
+    return li;
+  }
+
+  // One message's <li>. lid: its entry in the server's timeline; bi: which bubble of that entry.
+  item(m) {
+    const li = document.createElement("li");
+    li.dataset.ts = m.ts || Date.now();
+    li.dataset.bi = m.bi || 0;
+    if (m.lid) li.dataset.lid = m.lid;
     if (m.role === "event") return this.record(li, m);
     li.className = "msg " + (m.role === "user" ? "me" : "her");
     if (m.role !== "user") {
@@ -120,8 +288,6 @@ export class Chat {
       b.textContent = m.text;
       li.append(b);
     }
-    this.list.append(li);
-    this.scroll();
     return li;
   }
 
@@ -130,14 +296,10 @@ export class Chat {
     li.className = "msg me";
     const b = document.createElement("div");
     b.className = "bubble call-record";
-    const secs = Math.round(m.seconds || 0);
-    const len = `${String(Math.floor(secs / 60)).padStart(2, "0")}:${String(secs % 60).padStart(2, "0")}`;
     b.innerHTML = `<svg viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>`;
-    b.append(secs < 2 ? t("callCancelled") : t("callRecord", len));
-    if (m.by === "kurisu" && secs >= 2) b.append(Object.assign(document.createElement("small"), { textContent: t("callHerHung") }));
+    b.append(callText(m));
+    if (m.by === "kurisu" && m.seconds >= 2) b.append(Object.assign(document.createElement("small"), { textContent: t("callHerHung") }));
     li.append(b);
-    this.list.append(li);
-    this.scroll();
     return li;
   }
 
@@ -202,34 +364,48 @@ export class Chat {
   }
 
   async send(payload, mine) {
-    this.render(mine);
-    if (this.busy) { this.pending.push(payload); return; }
-    await this.exchange(payload);
-    // texts you sent while she was replying go together, as one turn
+    if (this.moreAfter) await this.load();     // reading old messages: back to the newest first
+    this.pending.push({ payload, li: this.live(mine) });
+    this.quiet();
+    this.idleAbort?.abort();     // she was only thinking of texting first: you go first
+    if (!this.busy) await this.drain();
+  }
+
+  // Texts you sent while she was replying go together, as one turn.
+  async drain() {
     while (this.pending.length) {
       const next = this.pending.splice(0);
-      const texts = next.filter(p => p.message).map(p => p.message);
-      for (const p of next.filter(p => p.sticker)) await this.exchange(p);
-      if (texts.length) await this.exchange({ messages: texts });
+      const texts = next.filter(p => p.payload.message);
+      for (const p of next.filter(p => p.payload.sticker)) await this.exchange(p.payload, [p.li]);
+      if (texts.length) await this.exchange({ messages: texts.map(p => p.payload.message) }, texts.map(p => p.li));
     }
   }
 
-  async exchange(payload) {
+  // mine: the <li>s of what you sent, to learn their place in the timeline.
+  // idle: she's texting first, so no "typing…" until she really writes, no error toasts, and
+  // until her first bubble you can still cut in (send() aborts it).
+  async exchange(payload, mine = [], idle = false) {
     this.busy = true;
-    this.setStatus(t("chatTyping"));
+    if (!idle) this.setStatus(t("chatTyping"));
     const t0 = performance.now();
-    let shown = 0;
+    const hers = [];
+    if (idle) this.idleAbort = new AbortController();
     try {
       const r = await this.api("/api/text", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+        signal: idle ? this.idleAbort.signal : undefined,
       });
       for await (const { event, data } of sseEvents(r)) {
         if (event === "message") {
           // she "types" each bubble: longer ones take longer; the first one overlaps the model's own wait
-          const wait = this.typingTime(data) - (shown ? 0 : performance.now() - t0);
+          if (idle && !hers.length) { this.idleAbort = null; this.setStatus(t("chatTyping")); }
+          const wait = this.typingTime(data) - (hers.length || idle ? 0 : performance.now() - t0);
           if (wait > 0) await sleep(wait);
-          this.render({ role: "assistant", ts: Date.now(), ...data });
-          shown++;
+          hers.push(this.live({ role: "assistant", ts: Date.now(), bi: hers.length, ...data }));
+        } else if (event === "sent") {
+          data.lids.forEach((lid, i) => { if (mine[i]) mine[i].dataset.lid = lid; });
+        } else if (event === "saved") {
+          for (const li of hers) if (li) li.dataset.lid = data.lid;
         } else if (event === "mood") {
           this.onMood?.(data.value);
         } else if (event === "error") {
@@ -237,11 +413,14 @@ export class Chat {
         }
       }
     } catch (e) {
-      this.toast(t("amadeusErr", e.message), 8000);
+      if (idle) console.warn("[chat] she didn't get to text first:", e.message);
+      else this.toast(t("amadeusErr", e.message), 8000);
     } finally {
       this.busy = false;
+      this.idleAbort = null;
       this.setStatus("");
     }
+    this.armIdle();             // what comes next depends on what was just said
   }
 
   typingTime(m) {
@@ -249,6 +428,46 @@ export class Chat {
     if (m.kind === "voice") return 400;   // the server already waited for the recording
     const perChar = this.settings().language === "zh" ? 110 : 45;
     return Math.min(2600, Math.max(500, 300 + perChar * (m.text || "").length));
+  }
+
+  // ---- when it goes quiet, she may text first. The server reads the conversation and says
+  // whether and after how long (server/lull.py); the page counts the quiet. Asking costs nothing:
+  // the model only hears of it when she actually might write.
+
+  quiet() {                     // you did something: she waits a while again
+    this.quietSince = Date.now();
+    clearTimeout(this.idleTimer);
+    clearTimeout(this.planTimer);
+    this.planTimer = setTimeout(() => this.armIdle(), 3000);   // once you've stopped typing
+  }
+
+  async armIdle() {
+    clearTimeout(this.idleTimer);
+    const s = this.settings();
+    if (!s.model || s.idle_talk === false || this.busy) return;   // after a reply, exchange() asks again
+    let plan;
+    try {
+      plan = await (await this.api("/api/text/lull")).json();
+    } catch {   // the server is away (restarting?): ask again in a minute rather than give up
+      this.idleTimer = setTimeout(() => this.armIdle(), 60_000);
+      return;
+    }
+    if (plan.wait == null || this.busy) return;
+    const guard = MIN_QUIET - (Date.now() - this.quietSince) / 1000;
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => this.nudge(), Math.max(plan.wait, guard, 5) * 1000);
+  }
+
+  async nudge() {
+    const s = this.settings();
+    if (!s.model || s.idle_talk === false) return;
+    if ($("#phone").dataset.mode !== "chat" || !this.loaded || this.busy || this.pending.length || this.rec ||
+        this.input.value.trim()) {
+      this.idleTimer = setTimeout(() => this.nudge(), 60_000);   // not now (on a call, writing...): in a minute
+      return;
+    }
+    await this.exchange({ event: "idle", idle: Math.round((Date.now() - this.quietSince) / 1000) }, [], true);
+    this.drain();               // anything you sent while she was thinking about it
   }
 
   // ---- stickers you can send her
@@ -322,8 +541,14 @@ export class Chat {
   }
 }
 
+// "Call 03:12", or "Call cancelled" for one that never really started.
+export function callText(m) {
+  const secs = Math.round(m.seconds || 0);
+  return secs < 2 ? t("callCancelled") : t("callRecord", `${String(Math.floor(secs / 60)).padStart(2, "0")}:${String(secs % 60).padStart(2, "0")}`);
+}
+
 // 14:05 today, "Yesterday 14:05", else the date too.
-function formatTime(ts) {
+export function formatTime(ts) {
   const d = new Date(ts), now = new Date();
   const hm = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
   const day = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();

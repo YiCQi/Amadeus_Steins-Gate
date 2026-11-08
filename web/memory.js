@@ -1,6 +1,7 @@
-// Her memory, as she keeps it (server/memory.py): her mood, what she knows about you, what
-// she remembers and how clearly, and what she was asked to forget. Forgetting seals a memory
-// rather than destroying it, so anything forgotten here can be brought back.
+// Her memory, as she keeps it (server/memory.py, server/notes.py): her mood, what she knows
+// about you (folded: the core she always has in mind, and the archive she recalls from), what
+// she remembers and how clearly, what changed lately (each change can be undone), and what she
+// was asked to forget. Forgetting seals rather than destroys, so it can always be restored.
 
 import { t } from "./i18n.js";
 
@@ -27,9 +28,10 @@ export class MemoryPanel {
 
   async act(what, kind, id, label) {
     if (what === "forget" && !confirm(t("mem.confirm", label))) return;
+    const body = what === "undo" ? { change: id } : { kind, id };
     try {
       const r = await this.api(`/api/memory/${what}`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind, id }),
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
       this.render(await r.json());
     } catch (e) {
@@ -58,13 +60,16 @@ export class MemoryPanel {
       now.append(row);
     } else now.append(el("p", "mem-empty", t("mem.nowNone")));
 
-    const facts = d.facts.filter(f => !f.sealed);
-    const fs = this.section(t("mem.facts"));
-    if (!facts.length) fs.append(el("p", "mem-empty", t("mem.factsNone")));
-    for (const f of facts.slice().reverse()) {
-      const row = this.item(f.text);
-      row.append(this.button(t("mem.forget"), () => this.act("forget", "fact", f.id, f.text)));
-      fs.append(row);
+    if (d.notes) this.knows(d.notes);
+    else {   // before notes: the old fact list
+      const facts = d.facts.filter(f => !f.sealed);
+      const fs = this.section(t("mem.facts"));
+      if (!facts.length) fs.append(el("p", "mem-empty", t("mem.factsNone")));
+      for (const f of facts.slice().reverse()) {
+        const row = this.item(f.text);
+        row.append(this.button(t("mem.forget"), () => this.act("forget", "fact", f.id, f.text)));
+        fs.append(row);
+      }
     }
 
     const eps = d.episodes.filter(e => !e.sealed).reverse();
@@ -82,8 +87,11 @@ export class MemoryPanel {
       es.append(row);
     }
 
+    if (d.notes?.changes.length) this.changes(d.notes.changes);
+
     const sealed = [...d.episodes.filter(e => e.sealed).map(e => ({ ...e, kind: "episode", label: e.raw ? t("mem.unsorted") : e.title })),
-                    ...d.facts.filter(f => f.sealed).map(f => ({ ...f, kind: "fact", label: f.text }))];
+                    ...d.facts.filter(f => f.sealed).map(f => ({ ...f, kind: "fact", label: f.text })),
+                    ...(d.notes?.forgotten || []).map(n => ({ ...n, kind: "note", label: n.text, sealed_at: n.forgotten_at }))];
     if (sealed.length) {
       const ss = this.section(t("mem.sealed"));
       ss.classList.add("mem-sealed");
@@ -93,6 +101,68 @@ export class MemoryPanel {
         ss.append(row);
       }
     }
+  }
+
+  // What she knows, folded: open it for the core by section, and the archive with a search box.
+  knows(n) {
+    const fold = this.fold(t("mem.knows"), t("mem.knowsSummary", n.core.length, n.core_chars, n.core_max, n.archive.length));
+    for (const [sec, title] of Object.entries(n.sections)) {
+      const lines = n.core.filter(x => x.section === sec);
+      if (!lines.length) continue;
+      fold.append(el("h4", null, t(`mem.sec.${sec}`) || title));
+      for (const x of lines) fold.append(this.noteRow(x));
+    }
+    if (!n.core.length) fold.append(el("p", "mem-empty", t("mem.factsNone")));
+    fold.append(el("h4", null, t("mem.archive")));
+    if (n.archive.length) {
+      const find = Object.assign(el("input", "mem-find"), { type: "search", placeholder: t("findPh") });
+      const rows = n.archive.map(x => this.noteRow(x));
+      find.oninput = () => {
+        const q = find.value.trim().toLowerCase();
+        for (const [i, r] of rows.entries()) r.hidden = !!q && !n.archive[i].text.toLowerCase().includes(q);
+      };
+      fold.append(find, ...rows);
+    } else fold.append(el("p", "mem-empty", t("mem.archiveNone")));
+  }
+
+  noteRow(x) {
+    const row = this.item(x.text);
+    const when = x.happened ? `${x.happened} · ` : "";
+    const meta = el("small", "mem-meta", `${when}${t("mem.noted")} ${stamp(x.recorded)}` + (x.evidence ? ` · ${t("mem.cameUp", x.evidence)}` : ""));
+    const text = row.querySelector(".mem-text");
+    text.append(meta);
+    if (x.history?.length) {
+      const h = Object.assign(el("details", "mem-history"));
+      h.append(el("summary", null, t("mem.versions", x.history.length)));
+      for (const v of x.history.slice().reverse()) h.append(el("p", null, `v${v.v} · ${stamp(v.recorded)} · ${v.text}`));
+      text.append(h);
+    }
+    const btns = el("div", "mem-btns");
+    btns.append(this.button(t("mem.outdated"), () => this.act("outdated", "note", x.id)),
+                this.button(t("mem.forget"), () => this.act("forget", "note", x.id, x.text)));
+    row.append(btns);
+    return row;
+  }
+
+  // What changed lately in what she knows, and by whom; anything but forgetting can be undone here.
+  changes(list) {
+    const fold = this.fold(t("mem.changes"), t("mem.changesSummary", list.length));
+    for (const c of list) {
+      const row = this.item(`${t(`mem.op.${c.op}`)} · ${c.text || ""}`);
+      const why = c.by === "model" || c.by === "review" ? c.why : "";   // her own reasons; yours and the system's are the label
+      row.querySelector(".mem-text").append(el("small", "mem-meta", [stamp(c.ts), t(`mem.by.${c.by}`), why].filter(Boolean).join(" · ")));
+      if (!["forget", "restore", "undo"].includes(c.op)) row.append(this.button(t("mem.undo"), () => this.act("undo", null, c.n)));
+      fold.append(row);
+    }
+  }
+
+  fold(title, summary) {
+    const d = el("details", "mem-fold");
+    const s = el("summary");
+    s.append(el("h3", null, title), el("small", null, summary));
+    d.append(s);
+    this.body.append(d);
+    return d;
   }
 
   section(title) {

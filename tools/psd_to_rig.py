@@ -195,6 +195,31 @@ def stack(parts, size):
     return C, A
 
 
+def underpaint_hair(parts, size):
+    """Repaint the back hair hidden behind every solid part of the front hair.
+
+    What See-through and tint_hidden put there is often near black (the background between
+    strands gets into the colour statistics), so a swinging lock opened a black gap behind it.
+    Hidden, it can be anything: paint it as the lock above it in shadow. The back hair is the
+    bottom layer, so this shows only where a lock moves off it."""
+    front, back = find(parts, "front hair"), find(parts, "back hair")
+    if front is None or back is None:
+        return
+    Fc, FA = on_canvas(front, size)
+    W, H = size
+    h, w = back.rgba.shape[:2]
+    x0, y0, x1, y1 = max(0, back.x), max(0, back.y), min(W, back.x + w), min(H, back.y + h)
+    win = (slice(y0 - back.y, y1 - back.y), slice(x0 - back.x, x1 - back.x))
+    want = FA[y0:y1, x0:x1] > 0.9
+    if not want.any():
+        return
+    colour = Fc[y0:y1, x0:x1] / np.maximum(FA[y0:y1, x0:x1], 1e-3)[..., None] * 0.72   # in the locks' shadow
+    region = back.rgba[win]
+    region[..., :3][want] = np.clip(colour[want], 0, 255).astype(np.uint8)
+    region[..., 3][want] = 255
+    print(f"  back hair: painted {int(want.sum())} px behind the front locks")
+
+
 def open_neck(parts, size, source, eye_y, orig):
     """Clear what lies under the chin, so a turned or raised head shows the neck there.
 
@@ -702,7 +727,11 @@ def synth_z(part, X, Y, head):
         hang = np.maximum(np.clip((np.abs(u) - 0.75) / 0.35, 0, 1), np.clip((Y - chin_y) / L, 0, 1))
         return (face + 0.05 * W) * (1 - hang) + 0.06 * W * hang
     if tag == "back hair":
-        return np.full_like(X, -0.45 * rz)
+        # behind the skull where the head covers it; the long hair hanging beside the face and
+        # below the chin is about level with the sides of the head, like the front locks over
+        # it, so a head turn doesn't slide the two apart and open a crack between them
+        behind = smoothstep(1.05, 0.7, np.abs(u)) * (1 - smoothstep(chin_y - 0.2 * L, chin_y + 0.4 * L, Y))
+        return -0.45 * rz * behind + 0.04 * W * (1 - behind)
     if tag == "neck":
         # the throat is in front of the spine the head turns on: it follows the chin a little
         # instead of sliding the other way and opening a wedge of neck shadow under the jaw
@@ -802,6 +831,7 @@ def build(psd_path, source, out_dir, depth_path=None):
     repaint_under(parts)
     complete_irides(parts)
     open_neck(parts, size, source, head["head"]["eyeY"], orig)
+    underpaint_hair(parts, size)
     for p in parts:
         edge_extend(p, (0, 0, size[0], size[1]))
     out_dir.mkdir(parents=True, exist_ok=True)

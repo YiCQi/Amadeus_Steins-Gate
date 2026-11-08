@@ -16,7 +16,7 @@ VOICE_DIR = DATA_DIR / "voice"             # her voice messages in the text chat
 # Keys the UI may change. Everything else lives in config.toml.
 UI_KEYS = {
     "provider", "base_url", "api_key", "model", "temperature", "reasoning_effort",
-    "user_name", "stt_mode", "show_japanese", "language",
+    "user_name", "stt_mode", "show_japanese", "language", "idle_talk",
 }
 
 
@@ -40,6 +40,7 @@ def load_settings() -> dict:
         "user_name": cfg.get("user", {}).get("name", ""),
         "stt_mode": cfg.get("stt", {}).get("mode", "local"),
         "show_japanese": False,
+        "idle_talk": True,   # when it goes quiet, she may speak up on her own
         "language": cfg.get("user", {}).get("language", "en"),  # subtitle language: "en" or "zh"
     }
     if SETTINGS_PATH.exists():

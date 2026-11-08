@@ -8,6 +8,7 @@ better meaning, so the model knows when to send it, one line per file:
 
 Lines starting with # are comments. The folder is read again whenever something in it changes.
 """
+import time
 from pathlib import Path
 
 from .config import ROOT
@@ -15,7 +16,7 @@ from .config import ROOT
 DIR = ROOT / "web" / "assets" / "stickers"
 INDEX = DIR / "stickers.txt"
 IMAGES = {".png", ".gif", ".webp", ".jpg", ".jpeg"}
-_cache: dict = {"key": None, "list": []}
+_cache: dict = {"key": None, "list": [], "checked": 0.0}
 
 
 def _meanings() -> dict[str, str]:
@@ -37,8 +38,11 @@ def _meanings() -> dict[str, str]:
 
 def load() -> list[dict]:
     """[{id, url, meaning}]: the ones stickers.txt lists first, in its order, then the rest."""
+    if _cache["key"] is not None and time.monotonic() - _cache["checked"] < 2:
+        return _cache["list"]   # looked at the folder a moment ago (a search can ask thousands of times)
     if not DIR.exists():
         return []
+    _cache["checked"] = time.monotonic()
     files = sorted(p for p in DIR.rglob("*") if p.is_file() and p.suffix.lower() in IMAGES)
     key = (INDEX.stat().st_mtime if INDEX.exists() else 0, tuple((str(p), p.stat().st_mtime) for p in files))
     if key == _cache["key"]:

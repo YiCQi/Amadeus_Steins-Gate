@@ -4,7 +4,7 @@ Runs in its own Python 3.12 venv (tools/voice/install_amadeus_vits.bat), because
 does not support the app's Python. server/tts.py starts it and talks to it on 127.0.0.1;
 it exits when the app does (--parent).
 
-    GET  /health                          200 once the model is loaded, else 503
+    GET  /health                          200 once the model is loaded, else 503; which device, and fallbacks so far
     POST /tts {"text": "...", "speed": 1, "pause": 1}  -> audio/wav (> 1: slower / longer pauses)
 """
 import argparse
@@ -25,8 +25,29 @@ os.environ["HF_ENDPOINT"] = "https://huggingface.co"  # a global hf-mirror endpo
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 MODEL = "mio/amadeus"
-tts = None
+tts = None       # her voice: on an NVIDIA GPU when this venv has a CUDA build of torch, else the CPU
+cpu_tts = None   # with a GPU: a CPU copy too, for when the GPU is out of memory or overloaded
 lock = threading.Lock()  # one synthesis at a time: it already uses all the CPU threads it gets
+
+# The GPU is used unless it's set aside: for a minute after it ran out of memory or a line took far
+# longer than its usual pace (a game or something else hogging it), or while little memory is free.
+MIN_FREE_MB, SLOW, SET_ASIDE = 600, 3.0, 60.0
+gpu = {"aside_until": 0.0, "pace": [], "fallbacks": 0}
+
+
+def _model(device: str):
+    import torch
+    from espnet2.bin.tts_inference import Text2Speech
+    try:  # cached: don't wait on the network
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        model = Text2Speech.from_pretrained(MODEL, device=device)
+    except Exception:
+        os.environ["HF_HUB_OFFLINE"] = "0"
+        model = Text2Speech.from_pretrained(MODEL, device=device)
+    with torch.no_grad():
+        model("あ。")  # the first call is slow; pay for it now
+    model.where = device
+    return model
 
 
 def load():
@@ -37,18 +58,42 @@ def load():
     t = time.perf_counter()
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         import torch
-        from espnet2.bin.tts_inference import Text2Speech
         torch.set_num_threads(max(1, (os.cpu_count() or 4) // 2))
-        try:  # cached: don't wait on the network
-            os.environ["HF_HUB_OFFLINE"] = "1"
-            model = Text2Speech.from_pretrained(MODEL, device="cpu")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        try:
+            tts = _model(device)
         except Exception:
-            os.environ["HF_HUB_OFFLINE"] = "0"
-            model = Text2Speech.from_pretrained(MODEL, device="cpu")
-        with torch.no_grad():
-            model("あ。")  # the first call is slow; pay for it now
-    tts = model
-    print(f"[voice] Amadeus voice ready ({time.perf_counter() - t:.1f}s)", flush=True)
+            if device == "cpu":
+                raise
+            device, tts = "cpu", _model("cpu")   # the GPU wouldn't take it: the CPU then
+    print(f"[voice] Amadeus voice ready ({time.perf_counter() - t:.1f}s, {device})", flush=True)
+    if device == "cuda":
+        threading.Thread(target=_load_fallback, daemon=True).start()
+
+
+def _load_fallback():
+    global cpu_tts
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        cpu_tts = _model("cpu")
+
+
+def _pick():
+    """The voice for the next line: the GPU unless it's set aside or short of memory (and the CPU copy is ready)."""
+    if tts.where == "cpu" or cpu_tts is None:
+        return tts
+    import torch
+    if time.monotonic() < gpu["aside_until"]:
+        return cpu_tts
+    if torch.cuda.mem_get_info()[0] < MIN_FREE_MB * 2**20:
+        print(f"[voice] little GPU memory free: this line on the CPU", flush=True)
+        return cpu_tts
+    return tts
+
+
+def _set_aside(why: str):
+    gpu["aside_until"] = time.monotonic() + SET_ASIDE
+    gpu["fallbacks"] += 1
+    print(f"[voice] GPU {why}: the CPU for the next {SET_ASIDE:.0f}s", flush=True)
 
 
 # Pauses follow the meaning, not the model's dice. Left alone, VITS draws each pause's
@@ -126,27 +171,51 @@ def pause_after(unit: str) -> float:
     return AFTER.get("…" if end.endswith("…") else end[-2:], AFTER.get(end[-1], 0.6))
 
 
-def synthesize(text: str, speed: float, pause: float = 1.0) -> bytes:
+def _render(model, units: list[str], speed: float, pause: float):
     import numpy as np
     import torch
-    units = split_units(text)
     pieces = []
-    with lock, torch.no_grad():
+    with torch.no_grad():
         for i, u in enumerate(units):
             if i:
                 sec = pause_after(units[i - 1]) * pause * np.random.uniform(0.85, 1.2)
-                pieces.append(np.zeros(int(sec * tts.fs), np.float32))
+                pieces.append(np.zeros(int(sec * model.fs), np.float32))
             say = u.rstrip("…")  # the … is the pause just added; VITS would add another
             if say.strip():
-                out = tts(say, decode_conf={"alpha": float(speed), "noise_scale_dur": DUR_NOISE})
-                pieces.append(tidy(out["wav"].numpy().astype(np.float32), tts.fs))
-    wav = np.concatenate(pieces) if pieces else np.zeros(int(0.3 * tts.fs), np.float32)
+                out = model(say, decode_conf={"alpha": float(speed), "noise_scale_dur": DUR_NOISE})
+                pieces.append(tidy(out["wav"].cpu().numpy().astype(np.float32), model.fs))
+    return pieces
+
+
+def synthesize(text: str, speed: float, pause: float = 1.0) -> bytes:
+    import numpy as np
+    units = split_units(text)
+    with lock:
+        model = _pick()
+        t = time.perf_counter()
+        try:
+            pieces = _render(model, units, speed, pause)
+        except Exception as e:   # out of memory, or the GPU otherwise failed: this line on the CPU
+            if model.where != "cuda" or cpu_tts is None:
+                raise
+            import torch
+            torch.cuda.empty_cache()
+            _set_aside(f"failed ({type(e).__name__})")
+            model, pieces = cpu_tts, _render(cpu_tts, units, speed, pause)
+        if model.where == "cuda":   # far slower than its usual pace: something else is hogging the GPU
+            per_char = (time.perf_counter() - t) / max(1, len(text))
+            pace = gpu["pace"]
+            if len(pace) >= 5 and per_char > SLOW * sorted(pace)[len(pace) // 2] and time.perf_counter() - t > 1.0:
+                _set_aside("overloaded")
+            pace.append(per_char)
+            del pace[:-20]
+    wav = np.concatenate(pieces) if pieces else np.zeros(int(0.3 * model.fs), np.float32)
     pcm = (np.clip(wav, -1, 1) * 32767).astype("<i2")
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
-        w.setframerate(tts.fs)
+        w.setframerate(model.fs)
         w.writeframes(pcm.tobytes())
     return buf.getvalue()
 
@@ -161,7 +230,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            self._send(200 if tts else 503, json.dumps({"ready": bool(tts)}).encode())
+            info = {"ready": bool(tts), "device": getattr(tts, "where", None), "cpu_fallback": cpu_tts is not None,
+                    "gpu_set_aside": time.monotonic() < gpu["aside_until"], "fallbacks": gpu["fallbacks"]}
+            self._send(200 if tts else 503, json.dumps(info).encode())
         else:
             self._send(404)
 

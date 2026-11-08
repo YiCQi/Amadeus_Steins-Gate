@@ -4,12 +4,16 @@ Calls and the text chat share one memory (memory.py): every message goes into on
 and both see what was said in the other.
 """
 import asyncio
+import bisect
 import io
 import itertools
 import json
+import random
+import re
 import time
 import uuid
 import wave
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -18,7 +22,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, kana, memory, persona, stickers
+from . import config, embed, kana, lull, memory, news, notes, persona, stickers
 from .llm import LLMError, stream_chat
 from .stt import WhisperSTT
 from .tts import TTSError, Voice, speakable
@@ -28,6 +32,7 @@ tts = Voice(cfg.get("tts", {}))
 tts.warm()
 stt = WhisperSTT(cfg.get("stt", {}))
 kana.warm()
+embed.warm()   # memory recall by meaning (server/embed.py); fetched on first run
 
 app = FastAPI(title="Amadeus")
 
@@ -37,8 +42,16 @@ def sse(event: str, data: dict) -> str:
 
 
 def sticker_meaning(sid: str) -> str:
+    """What a sticker conveys, its mood. The catalogue's notes in brackets on when to send it
+    are for her choosing hers, not part of what one means when you send it."""
     s = stickers.find(sid or "")
-    return s["meaning"] if s else (sid or "")
+    if not s:
+        return sid or ""
+    return re.sub(r"\s*[（(][^）)]*[）)]", "", s["meaning"]).strip() or s["meaning"]
+
+
+CHAT_MAX = 3   # bubbles in one chat reply, at most (she's told one or two; this is the backstop)
+CALL_MAX = 5   # lines in one spoken reply, at most (room for an explanation when asked)
 
 
 def need_model() -> dict:
@@ -52,40 +65,53 @@ _background: set[asyncio.Task] = set()
 
 
 def remember_later(settings: dict, language: str):
-    """After a reply: let her consolidate older conversation into long-term memory, in the background."""
+    """After a reply: let her look after her long-term memory (memory.maintain), in the background."""
     async def summarize(system: str, text: str) -> str:
         out = ""
         async for chunk in stream_chat({**settings, "temperature": 0.3}, system, [{"role": "user", "content": text}]):
             out += chunk
         return out
 
-    task = asyncio.create_task(memory.consolidate(summarize, language))
+    task = asyncio.create_task(memory.maintain(summarize, language))
     _background.add(task)
     task.add_done_callback(_background.discard)
 
 
 # ---------- the video call ----------
 
+async def idle_news(chance: float) -> list[str]:
+    """Now and then, a few headlines she might bring up when it goes quiet (server/news.py)."""
+    return await news.headlines(cfg.get("news", {})) if random.random() < chance else []
+
+
 class ChatIn(BaseModel):
     message: str | None = None
-    event: str | None = None  # "connect" when a new call starts
+    event: str | None = None  # "connect" when a new call starts; "idle" when the line has gone quiet
+    idle: float = 0           # for how long (s)
 
 
 @app.post("/api/chat")
 async def chat(body: ChatIn):
     settings = need_model()
     language = settings.get("language", "en")
-    connect = body.event == "connect"
-    user_text = persona.connect_event(language) if connect else (body.message or "").strip()
+    connect, idle = body.event == "connect", body.event == "idle"
+    if connect:
+        user_text = persona.connect_event(language)
+    elif idle:   # not something the user said: a note that lets her speak up, or not
+        n = memory.unanswered("call")
+        user_text = persona.idle_call(body.idle, await idle_news(0.3), n, may_end=n >= 2 or body.idle >= 150)
+    else:
+        user_text = (body.message or "").strip()
     if not user_text:
         raise HTTPException(400, "Empty message")
 
-    mem, recent = memory.context("call", "" if connect else user_text, sticker_meaning)
-    messages = persona.call_messages(recent + [{"role": "user", "content": user_text}])
+    mem, recent = memory.context("call", "" if connect or idle else user_text, sticker_meaning)
+    said = {"role": "user", "content": user_text, **({} if idle else {"ts": memory.now_ms()})}   # idle notes say how long themselves
+    messages = persona.call_messages(recent + [said], since=memory.last_before(recent))
     system = persona.build_system_prompt(settings.get("user_name", ""), language, context=mem)
     if connect:
         memory.add("call", "event", kind="call_start")
-    else:
+    elif not idle:
         memory.add("call", "user", user_text)
 
     # A new turn makes any voice still being synthesised for the previous one stale.
@@ -108,7 +134,9 @@ async def chat(body: ChatIn):
                 return
             seg = persona.parse_line(text)
             vid, early = early, None
-            if not seg:
+            if not seg or persona.is_silence(seg["sub"]):   # "(silence)": she let the quiet be
+                return
+            if len(kept) >= CALL_MAX:   # enough said for one turn: the rest goes unsaid
                 return
             mark("first_line")
             kept.append(persona.format_line(seg))
@@ -127,7 +155,7 @@ async def chat(body: ChatIn):
                     for ev in finish(done):
                         yield ev
                 # "emotion|Japanese|" is enough to start the voice; the subtitle can follow.
-                if early is None and line.count("|") >= 2:
+                if early is None and line.count("|") >= 2 and len(kept) < CALL_MAX:
                     emotion, ja = line.split("|")[:2]
                     ja = ja.strip()
                     if persona.looks_japanese(ja):
@@ -147,10 +175,11 @@ async def chat(body: ChatIn):
         timing.setdefault("first_voice_text", timing.get("first_line"))
         print("[timing]", "  ".join(f"{k}={v}s" for k, v in timing.items()), flush=True)
         if kept:
-            memory.add("call", "assistant", "\n".join(kept))
-        yield sse("mood", {"value": memory.feel(feelings)})
+            memory.add("call", "assistant", "\n".join(kept), **({"idle": round(body.idle)} if idle else {}))
+            yield sse("mood", {"value": memory.feel(feelings)})
         yield sse("done", {"timing": timing})
-        remember_later(settings, language)
+        if kept or not idle:
+            remember_later(settings, language)
 
     return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 
@@ -164,7 +193,7 @@ class CallEndIn(BaseModel):
 async def call_end(body: CallEndIn):
     """The call is over: it goes into her memory, and into the chat as a call record."""
     e = memory.add("call", "event", kind="call_end", seconds=round(body.seconds), by="kurisu" if body.by == "kurisu" else "user")
-    return {"role": "event", "kind": "call", "seconds": e["seconds"], "by": e["by"], "ts": e["ts"]}
+    return shown(e)[0]
 
 
 # ---------- text chat: text bubbles, her stickers, the odd Japanese voice message ----------
@@ -173,6 +202,8 @@ class TextIn(BaseModel):
     message: str | None = None
     messages: list[str] | None = None   # several sent while she was still replying: one turn
     sticker: str | None = None          # the user sent one of her stickers (its id)
+    event: str | None = None            # "idle": the user has been quiet a while, she may text first
+    idle: float = 0                     # for how long (s)
 
 
 def wav_seconds(audio: bytes) -> float | None:
@@ -210,11 +241,34 @@ def bubble_out(b: dict) -> dict | None:
     return {"kind": "text", "emotion": b["emotion"], "text": b["text"]}
 
 
+_nudge = {"at": 0.0}   # when she last began texting first: one at a time, even with the chat open twice
+
+
+def quiet_stream(state: str) -> StreamingResponse:
+    """She didn't text first after all (not due yet, or already doing it): nothing to show."""
+    return StreamingResponse(iter([sse("done", {"skipped": state})]), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/text/lull")
+async def text_lull():
+    """Whether, and in how many seconds of quiet, she might text first (server/lull.py)."""
+    p = lull.plan()
+    return {"state": p["state"], "wait": p["wait"]}
+
+
 @app.post("/api/text")
 async def text_chat(body: TextIn):
     settings = need_model()
     language = settings.get("language", "en")
-    if body.sticker:
+    idle = body.event == "idle"
+    if idle:
+        plan = lull.plan()
+        if time.monotonic() - _nudge["at"] < 120 or not lull.due_now(plan):
+            return quiet_stream(plan["state"])
+        _nudge["at"] = time.monotonic()
+        sent = []
+    elif body.sticker:
         s = stickers.find(body.sticker)
         if not s:
             raise HTTPException(400, "Unknown sticker")
@@ -224,20 +278,30 @@ async def text_chat(body: TextIn):
         if not sent:
             raise HTTPException(400, "Empty message")
 
-    query = " ".join(sticker_meaning(persona.user_sticker(m)) if persona.user_sticker(m) else m for m in sent)
+    # What to recall by: what they wrote. A sticker is a tone, not a topic: recalling by what it
+    # shows (a Dr Pepper one, say) would hand her memories about that and invite her to dwell on it.
+    query = " ".join(m for m in sent if not persona.user_sticker(m))
     mem, recent = memory.context("chat", query, sticker_meaning)
-    turn = [{"role": "user", "content": m} for m in sent]
-    messages = persona.chat_messages(recent + turn, sticker_meaning)
+    if idle:   # not something the user said: a note that lets her text first, or not
+        headlines = await idle_news(0.5) if plan["state"] in persona.NEWS_IN else []
+        note = persona.idle_chat(plan["state"], body.idle, headlines, memory.unanswered("chat"),
+                                 ago=memory.ago(plan["since"]) if plan.get("since") else "",
+                                 part=memory.part_of_day(datetime.now().hour), question=plan.get("question", ""))
+        turn = [{"role": "user", "content": note}]
+    else:   # with the time, so a long pause before it can be marked
+        turn = [{"role": "user", "content": m, "ts": memory.now_ms()} for m in sent]
+    messages = persona.chat_messages(recent + turn, sticker_meaning, since=memory.last_before(recent))
     system = persona.build_chat_prompt(settings.get("user_name", ""), language, stickers.prompt_list(), context=mem)
-    for m in sent:
-        memory.add("chat", "user", m)
+    lids = [memory.add("chat", "user", m)["id"] for m in sent]
 
     async def events():
         line, kept, feelings = "", [], []
+        if lids:   # where your messages are in the timeline, for the page's paging
+            yield sse("sent", {"lids": lids})
 
         async def bubble(raw: str):
             b = persona.parse_chat_line(raw)
-            if not b:
+            if not b or (b["kind"] == "text" and persona.is_silence(b["text"])):
                 return None
             if b["kind"] == "voice":
                 b["file"], secs = await record_voice(b["ja"], b["emotion"])
@@ -254,14 +318,21 @@ async def text_chat(body: TextIn):
             return sse("message", out)
 
         try:
-            async for chunk in stream_chat(settings, system, messages):
-                line += chunk
-                while "\n" in line:
-                    done, line = line.split("\n", 1)
-                    ev = await bubble(done)
-                    if ev:
-                        yield ev
-            ev = await bubble(line)
+            chunks = stream_chat(settings, system, messages)
+            try:
+                async for chunk in chunks:
+                    line += chunk
+                    while "\n" in line and len(kept) < CHAT_MAX:
+                        done, line = line.split("\n", 1)
+                        ev = await bubble(done)
+                        if ev:
+                            yield ev
+                    if len(kept) >= CHAT_MAX:   # enough said: the model is stopped, the rest neither shown nor paid for
+                        line = ""
+                        break
+            finally:
+                await chunks.aclose()
+            ev = await bubble(line) if len(kept) < CHAT_MAX else None
             if ev:
                 yield ev
         except LLMError as e:
@@ -271,37 +342,112 @@ async def text_chat(body: TextIn):
             yield sse("error", {"message": f"{type(e).__name__}: {e}"})
             return
         if kept:
-            memory.add("chat", "assistant", "\n".join(kept))
-        yield sse("mood", {"value": memory.feel(feelings)})
+            e = memory.add("chat", "assistant", "\n".join(kept), **({"idle": round(body.idle)} if idle else {}))
+            yield sse("saved", {"lid": e["id"]})
+            yield sse("mood", {"value": memory.feel(feelings)})
         yield sse("done", {})
-        remember_later(settings, language)
+        if kept or not idle:
+            remember_later(settings, language)
 
-    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+    async def released(stream):
+        try:
+            async for ev in stream:
+                yield ev
+        finally:          # done, or the page gave up on it (you wrote first)
+            _nudge["at"] = 0.0
+
+    return StreamingResponse(released(events()) if idle else events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache"})
+
+
+# ---------- the chat's history: a page at a time, and search ----------
+
+def chat_entries() -> list[dict]:
+    """What the chat shows, oldest first: its messages and the records of finished calls."""
+    return [m for m in memory.log() if (m["ch"] == "chat" and m["role"] in ("user", "assistant"))
+            or (m["role"] == "event" and m.get("kind") == "call_end")]
+
+
+def shown(m: dict) -> list[dict]:
+    """One timeline entry as the chat shows it (one reply of hers can be several bubbles).
+    lid: the entry's id, which the page pages and jumps by."""
+    base = {"lid": m["id"], "ts": m.get("ts")}
+    if m["role"] == "event":
+        return [{**base, "role": "event", "kind": "call", "seconds": m.get("seconds", 0), "by": m.get("by")}]
+    if m["role"] == "user":
+        sid = persona.user_sticker(m["content"])
+        s = stickers.find(sid) if sid else None
+        return [{**base, "role": "user", **({"kind": "sticker", "id": s["id"], "url": s["url"], "meaning": s["meaning"]}
+                                            if s else {"kind": "text", "text": m["content"]})}]
+    bubbles = [b for b in map(bubble_out, persona.chat_bubbles(m["content"])) if b]
+    return [{**base, "role": "assistant", "bi": i, **b} for i, b in enumerate(bubbles)]   # bi: which bubble
+
+
+def day_start(date: str) -> int:
+    """"2026-11-03" -> that day's first millisecond, local time."""
+    try:
+        return int(datetime.strptime(date, "%Y-%m-%d").timestamp() * 1000)
+    except ValueError:
+        raise HTTPException(400, "Dates look like 2026-11-03")
 
 
 @app.get("/api/text/history")
-async def text_history():
-    """The chat as the page shows it: chat messages and call records, from the shared timeline."""
-    out = []
-    for m in memory.log():
-        ts = m.get("ts")
-        if m["role"] == "event":
-            if m.get("kind") == "call_end":
-                out.append({"role": "event", "kind": "call", "seconds": m.get("seconds", 0), "by": m.get("by"), "ts": ts})
+async def text_history(before: int | None = None, after: int | None = None, around: int | None = None,
+                       date: str | None = None, limit: int = 40):
+    """A page of the chat, `limit` entries: the newest; those before or after an entry id (scrolling);
+    those around one (a search result); or from the first message of a day on."""
+    entries = chat_entries()
+    ids, n, limit = [m["id"] for m in entries], len(entries), max(1, min(limit, 200))
+    target = None
+    if date:
+        start = day_start(date)
+        i = next((i for i, m in enumerate(entries) if m["ts"] >= start), n - 1)   # nothing since: the newest
+        lo = max(0, min(i, n - limit))
+        hi = min(n, lo + limit)
+        target = ids[i] if entries else None
+    elif around is not None:
+        i = bisect.bisect_left(ids, around)
+        lo = max(0, min(i - limit // 3, n - limit))
+        hi = min(n, lo + limit)
+        target = around
+    elif before is not None:
+        hi = bisect.bisect_left(ids, before)
+        lo = max(0, hi - limit)
+    elif after is not None:
+        lo = bisect.bisect_right(ids, after)
+        hi = min(n, lo + limit)
+    else:
+        lo, hi = max(0, n - limit), n
+    return {"items": [it for m in entries[lo:hi] for it in shown(m)], "more_before": lo > 0,
+            "more_after": hi < n, "target": target}
+
+
+def searchable(it: dict) -> str:
+    return " ".join(filter(None, [it.get("text"), it.get("sub"), it.get("ja"), it.get("meaning")]))
+
+
+@app.get("/api/text/search")
+async def text_search(q: str = "", kind: str = "", date: str = "", limit: int = 80):
+    """Chat messages with all of q's words, newest first; kind: only "voice" messages,
+    "sticker"s or "call" records; date: only that day. Each with the entry id to jump to."""
+    words = q.lower().split()
+    if not (words or kind or date):
+        return {"items": [], "total": 0}
+    span = (day_start(date), day_start(date) + 86400_000) if date else None
+    items, total = [], 0
+    for m in reversed(chat_entries()):
+        if span and not span[0] <= m["ts"] < span[1]:
             continue
-        if m["ch"] != "chat":
-            continue
-        if m["role"] == "user":
-            sid = persona.user_sticker(m["content"])
-            s = stickers.find(sid) if sid else None
-            out.append({"role": "user", "ts": ts, **({"kind": "sticker", "id": s["id"], "url": s["url"]} if s else
-                                                      {"kind": "text", "text": m["content"]})})
-        else:
-            for b in persona.chat_bubbles(m["content"]):
-                shown = bubble_out(b)
-                if shown:
-                    out.append({"role": "assistant", "ts": ts, **shown})
-    return out[-600:]
+        for it in reversed(shown(m)):
+            if kind and it.get("kind") != kind:
+                continue
+            text = searchable(it)
+            if words and not all(w in text.lower() for w in words):
+                continue
+            total += 1
+            if len(items) < limit:
+                items.append(it)
+    return {"items": items, "total": total}
 
 
 @app.get("/api/stickers")
@@ -320,7 +466,7 @@ async def voice_message(name: str):
 # ---------- her memory: what she remembers, and forgetting (sealing) things ----------
 
 class MemoryIn(BaseModel):
-    kind: str        # "episode", "fact", or "recent" (the conversation not yet sorted into memories)
+    kind: str        # "note", "episode", "fact" (before notes), or "recent" (the conversation not yet sorted)
     id: int | None = None
 
 
@@ -333,6 +479,28 @@ async def memory_overview():
 async def memory_forget(body: MemoryIn):
     if not memory.forget(body.kind, body.id):
         raise HTTPException(404, "Nothing to forget there")
+    settings = config.load_settings()
+    if body.kind == "note" and settings.get("model"):   # rewrite older memories without it now, not after the next reply
+        remember_later(settings, settings.get("language", "en"))
+    return memory.overview()
+
+
+@app.post("/api/memory/outdated")
+async def memory_outdated(body: MemoryIn):
+    """A note that isn't true any more: retired (unlike forgetting, nothing is blocked)."""
+    if not notes.no_longer_true(body.id):
+        raise HTTPException(404, "No such note")
+    return memory.overview()
+
+
+class UndoIn(BaseModel):
+    change: int      # the number of a change in what she knows (notes.py changes.jsonl)
+
+
+@app.post("/api/memory/undo")
+async def memory_undo(body: UndoIn):
+    if not notes.undo(body.change):
+        raise HTTPException(404, "That change can't be undone (forgetting is undone by restoring)")
     return memory.overview()
 
 
@@ -372,8 +540,9 @@ async def voice(vid: str):
         audio, media_type, engine, secs = await asyncio.shield(task)
     except asyncio.CancelledError:
         raise HTTPException(410, "Voice cancelled by a newer message")
-    except TTSError as e:
-        raise HTTPException(502, str(e))
+    except Exception as e:   # say why in the window: the page only shows it once
+        print(f"[voice] line {vid} failed: {type(e).__name__}: {e}", flush=True)
+        raise HTTPException(502, str(e) if isinstance(e, TTSError) else f"{type(e).__name__}: {e}")
     finally:
         if task.done():
             voices.pop(vid, None)
@@ -393,6 +562,7 @@ async def synthesize(body: TTSIn):
     try:
         audio, media_type, engine = await tts.synthesize(body.text, body.emotion)
     except TTSError as e:
+        print(f"[voice] a line asked for again failed too: {e}", flush=True)
         raise HTTPException(502, str(e))
     headers = {"X-Voice-Engine": engine, "X-Kana": quote(kana.reading(speakable(body.text)) or "")}  # headers are ASCII
     return Response(audio, media_type=media_type, headers=headers)
