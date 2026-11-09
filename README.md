@@ -25,7 +25,7 @@ and of the whole cast, and remembers you the way a person does.
 
 ### Video calls
 
-Her face moves like a Live2D model, built from a single portrait: she turns her head, blinks, looks around and lip-syncs to every syllable, with 15 expressions from a smug smirk to a full-blown tantrum. She speaks Japanese in her own voice while subtitles appear in English or 简体中文. Talk through the mic, hands-free, or type. Hands-free, she answers a moment after you stop. If you were only pausing to think, she lets you finish. Talk over her and she stops, remembering only what she got to say. And she can hang up on you, too.
+Her face moves like a Live2D model, built from a single portrait: she turns her head, blinks, looks around and lip-syncs to every syllable, with 15 expressions from a smug smirk to a full-blown tantrum. She speaks Japanese in her own voice while subtitles appear in English or 简体中文. Talk through the mic, hands-free, or type. Talk over her and she stops, remembering only what she got to say. And she can hang up on you, too.
 
 </td>
 </tr>
