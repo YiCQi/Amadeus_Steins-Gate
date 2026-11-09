@@ -6,3 +6,6 @@ __pycache__/
 art/*/*.psd
 art/*/*.psd.json
 art/review/
+
+# your own stickers: used in the chat, never committed
+web/assets/stickers/private/

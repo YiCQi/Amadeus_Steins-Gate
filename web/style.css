@@ -269,11 +269,14 @@ button, input, select { font: inherit; color: inherit; }
 .icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .icon:hover { border-color: #555; }
 .icon.accent { background: var(--accent); border-color: var(--accent); }
-#btn-mic.rec { background: #0b4f7a; border-color: #6cc5ff; animation: blink 1.2s infinite; }
+/* listening: a steady red button (press again to send), and a ring that follows your voice (web/level.js) */
+#btn-mic.rec { background: #b3122b; border-color: #ff6b81; color: #fff;
+  box-shadow: 0 0 0 calc(3px + var(--level, 0) * 14px) #ff5a6e4d; transition: box-shadow .08s linear; }
 #btn-mic.busy { opacity: .5; }
 #btn-mic:disabled { opacity: .3; cursor: default; }
-#btn-call.live { background: #0b3d2a; border-color: var(--data); color: var(--data); }
-#btn-call.hearing svg { animation: blink .6s infinite; }
+#btn-call.live { background: #0b3d2a; border-color: var(--data); color: var(--data);
+  box-shadow: 0 0 0 calc(var(--level, 0) * 14px) #50dca04d; transition: box-shadow .08s linear; }
+#btn-call.hearing { background: #12603f; color: #fff; }
 
 /* ---------- log ---------- */
 #log {
@@ -358,7 +361,8 @@ label input:focus, label select:focus { border-color: #d2283a99; }
 .chat-btn:hover { color: var(--c-text); background: #ffffff0d; }
 .chat-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 #chat-call { color: #1fbf62; }
-.chat-btn.rec { color: #6cc5ff; animation: blink 1.2s infinite; }
+.chat-btn.rec { color: #fff; background: #b3122b;
+  box-shadow: 0 0 0 calc(2px + var(--level, 0) * 12px) #ff5a6e4d; transition: box-shadow .08s linear; }
 .chat-btn.busy { opacity: .45; }
 
 #chat-list { position: relative; z-index: 1; flex: 1; min-height: 0; overflow-y: auto; margin: 0; padding: 8px 12px 16px; list-style: none; overscroll-behavior: contain; }

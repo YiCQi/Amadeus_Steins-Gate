@@ -13,6 +13,7 @@ import re
 import time
 import uuid
 import wave
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -31,6 +32,7 @@ cfg = config.load_config()
 tts = Voice(cfg.get("tts", {}))
 tts.warm()
 stt = WhisperSTT(cfg.get("stt", {}))
+stt.warm()     # speech recognition loads in the background, ready for the first thing you say
 kana.warm()
 embed.warm()   # memory recall by meaning (server/embed.py); fetched on first run
 
@@ -88,6 +90,13 @@ class ChatIn(BaseModel):
     message: str | None = None
     event: str | None = None  # "connect" when a new call starts; "idle" when the line has gone quiet
     idle: float = 0           # for how long (s)
+    page: str = ""            # which open page this is: a new turn there cancels only that page's lines
+    turn: str = ""            # the page's id for this turn, so it can be taken back ...
+    retract: str = ""         # ... by the next one: the turn whose message this one repeats with the rest
+
+
+# Turns taken back while their reply may still be running: whatever it was, it didn't happen.
+retracted: deque[str] = deque(maxlen=50)
 
 
 @app.post("/api/chat")
@@ -95,6 +104,14 @@ async def chat(body: ChatIn):
     settings = need_model()
     language = settings.get("language", "en")
     connect, idle = body.event == "connect", body.event == "idle"
+    if body.retract:
+        # hands-free: they paused, then went on talking before she said a word; this message has it all
+        retracted.append(body.retract)
+        try:
+            n = memory.retract("call", body.retract)
+            print(f"[call] went on talking after a pause: the first part is sent again with the rest ({n} log entries taken back)", flush=True)
+        except OSError as e:   # the log briefly locked (an antivirus scan, say): the first part just stays in it
+            print(f"[call] couldn't take back the first part of what they said ({e}); it stays in the log", flush=True)
     if connect:
         user_text = persona.connect_event(language)
     elif idle:   # not something the user said: a note that lets her speak up, or not
@@ -112,12 +129,16 @@ async def chat(body: ChatIn):
     if connect:
         memory.add("call", "event", kind="call_start")
     elif not idle:
-        memory.add("call", "user", user_text)
+        memory.add("call", "user", user_text, **({"turn": body.turn} if body.turn else {}))
 
-    # A new turn makes any voice still being synthesised for the previous one stale.
-    for task in voices.values():
-        task.cancel()
-    voices.clear()
+    # A new turn makes any voice still being synthesised for this page's previous one stale. Another
+    # page's lines are left alone: a second tab (or browser) with the app open mustn't silence this one.
+    mine = [vid for vid, (page, _) in voices.items() if not body.page or page in ("", body.page)]
+    unfinished = sum(not voices[vid][1].done() for vid in mine)
+    for vid in mine:
+        voices.pop(vid)[1].cancel()
+    if unfinished:
+        print(f"[voice] {unfinished} unfinished line(s) dropped: a newer turn ({body.event or 'message'}) came in", flush=True)
 
     async def events():
         t0 = time.perf_counter()
@@ -142,8 +163,10 @@ async def chat(body: ChatIn):
             kept.append(persona.format_line(seg))
             feelings.append(seg["emotion"])
             if vid is None:
-                vid = start_voice(seg["ja"], seg["emotion"])
-                yield sse("voice", {"id": vid, "emotion": seg["emotion"], "ja": seg["ja"], "kana": kana.reading(speakable(seg["ja"]))})
+                # Chinese written where the Japanese goes: her voice would read it as gibberish
+                say = seg["ja"] if persona.speakable_japanese(seg["ja"]) else ""
+                vid = start_voice(say, seg["emotion"], body.page)
+                yield sse("voice", {"id": vid, "emotion": seg["emotion"], "ja": say, "kana": kana.reading(speakable(say)) if say else ""})
             yield sse("segment", {"id": vid, "sub": seg["sub"]})
 
         try:
@@ -160,7 +183,7 @@ async def chat(body: ChatIn):
                     ja = ja.strip()
                     if persona.looks_japanese(ja):
                         mark("first_voice_text")
-                        early = start_voice(ja, persona.norm_emotion(emotion))
+                        early = start_voice(ja, persona.norm_emotion(emotion), body.page)
                         yield sse("voice", {"id": early, "emotion": persona.norm_emotion(emotion), "ja": ja,
                                             "kana": kana.reading(speakable(ja))})
             for ev in finish(line):
@@ -174,6 +197,8 @@ async def chat(body: ChatIn):
         mark("total")
         timing.setdefault("first_voice_text", timing.get("first_line"))
         print("[timing]", "  ".join(f"{k}={v}s" for k, v in timing.items()), flush=True)
+        if body.turn and body.turn in retracted:   # taken back while this was being written
+            return
         if kept:
             memory.add("call", "assistant", "\n".join(kept), **({"idle": round(body.idle)} if idle else {}))
             yield sse("mood", {"value": memory.feel(feelings)})
@@ -345,6 +370,8 @@ async def text_chat(body: TextIn):
             e = memory.add("chat", "assistant", "\n".join(kept), **({"idle": round(body.idle)} if idle else {}))
             yield sse("saved", {"lid": e["id"]})
             yield sse("mood", {"value": memory.feel(feelings)})
+        elif idle:   # she chose to stay quiet: that holds until one of you writes, rather than asking her again
+            lull.decline()
         yield sse("done", {})
         if kept or not idle:
             remember_later(settings, language)
@@ -513,7 +540,7 @@ async def memory_restore(body: MemoryIn):
 
 # ---------- voice jobs: started from the call stream, fetched by id ----------
 
-voices: dict[str, asyncio.Task] = {}
+voices: dict[str, tuple[str, asyncio.Task]] = {}   # line id -> (the page that asked, its synthesis)
 _voice_ids = itertools.count(1)
 
 
@@ -523,18 +550,19 @@ async def _timed_synthesis(text: str, emotion: str):
     return audio, media_type, engine, time.perf_counter() - t
 
 
-def start_voice(ja: str, emotion: str) -> str:
+def start_voice(ja: str, emotion: str, page: str = "") -> str:
     vid = f"v{next(_voice_ids)}"
     if ja and tts.enabled:
-        voices[vid] = asyncio.create_task(_timed_synthesis(ja, emotion))
+        voices[vid] = (page, asyncio.create_task(_timed_synthesis(ja, emotion)))
     return vid
 
 
 @app.get("/api/voice/{vid}")
 async def voice(vid: str):
-    task = voices.get(vid)
-    if task is None:
+    entry = voices.get(vid)
+    if entry is None:
         raise HTTPException(404, "No voice for this line (expired, or TTS disabled)")
+    task = entry[1]
     try:
         # shield: if the browser goes away, let synthesis finish instead of cancelling it
         audio, media_type, engine, secs = await asyncio.shield(task)

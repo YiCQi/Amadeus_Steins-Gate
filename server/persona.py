@@ -102,7 +102,7 @@ One line per sentence:
 emotion|Japanese|subtitle
 To hang up, end your reply with one more line that says only: hangup
 - emotion: one of {emotions}. Pick the strength that fits the moment: {emotion_guide}.
-- Japanese: exactly what you say out loud — natural colloquial Kurisu, the way she talks in the Japanese anime (〜わよ, 〜じゃない, 〜でしょ, 〜なの, べ、別に). Pure Japanese only: when you echo the user's own words, say them the Japanese way (傲娇 → ツンデレ, 害羞 → 照れる, 新的会话 → 新しい会話), never in Chinese characters Japanese doesn't use. Write foreign words in katakana; no Latin letters.
+- Japanese: exactly what you say out loud — natural colloquial Kurisu, the way she talks in the Japanese anime (〜わよ, 〜じゃない, 〜でしょ, 〜なの, べ、別に). Pure Japanese only: when you echo the user's own words, say them the Japanese way (傲娇 → ツンデレ, 害羞 → 照れる, 新的会话 → 新しい会話), never in Chinese characters Japanese doesn't use. Write foreign words in katakana; no Latin letters. It is always Japanese, from your very first line, even right after texting in another language: your words in {lang_name} go in the subtitle.
 - subtitle: that line in {lang_style}.
 - Make the FIRST line short (under ~15 Japanese characters) so your voice can start right away.
 - Usually one or two lines in all, at most three (more only when asked to explain).
@@ -172,9 +172,13 @@ voice|smile|おやすみ。ちゃんと寝なさいよ。|晚安。给我好好�
 SYSTEM_PROMPT = INTRO + WHO + CALL + "{context}"
 CHAT_PROMPT = INTRO + WHO + CHAT + "{context}"
 
+# In English for both: written in Chinese, after a chat in Chinese, the greeting tended to come
+# back in Chinese where her Japanese goes (which her voice can only read as gibberish).
 CONNECT_EVENTS = {
-    "en": "(System: the user has just started a video call with you. Greet them briefly, in character. Subtitles in English.)",
-    "zh": "（系统：用户刚刚和你接通了视频通话。请保持角色，简短地打个招呼。字幕必须使用简体中文。）",
+    "en": "(System: the user has just started a video call with you. Greet them briefly, in character, speaking "
+          "Japanese as always: emotion|Japanese|subtitle, with the subtitle in English.)",
+    "zh": "(System: the user has just started a video call with you. Greet them briefly, in character, speaking "
+          "Japanese as always: emotion|Japanese|subtitle, with the subtitle in Simplified Chinese.)",
 }
 
 
@@ -232,6 +236,12 @@ def kana_count(s: str) -> int:
 def looks_japanese(s: str) -> bool:
     """Japanese almost always contains kana; Chinese and English never do."""
     return kana_count(s) > 0
+
+
+def speakable_japanese(s: str) -> bool:
+    """Whether her voice, which only speaks Japanese, can say it: a line with kana, or a word or two
+    of kanji (了解。 本当？). Anything longer without a single kana is Chinese in the wrong place."""
+    return looks_japanese(s) or 0 < len(re.sub(r"[\W\d_]", "", s)) <= 4
 
 
 def norm_emotion(e: str) -> str:
@@ -340,6 +350,8 @@ IDLE_SITUATIONS = {
              "you happened to read."),
     "after_call": ("Your video call ended {ago}, and they haven't written since.",
                    "say something about the call, or whatever is on your mind."),
+    "away": ("They said “{question}” {ago}, and went off to do it.",
+             "once it's been long enough, check in: ask how it went, or whether they're back. Too soon: stay quiet."),
     "after_bye": ("You said goodbye {ago}, and it has been quiet since.",
                   "send something small: a thought, a question, something you happened to read."),
     "morning": ("You said good night {ago}; it's {part} now.", "a good-morning text, in your own way."),

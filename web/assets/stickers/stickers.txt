@@ -5,31 +5,35 @@
 # 什么场合发写在括号里（比如「（被夸的时候）」）：她挑自己的表情时会看；你发给她时，她只看括号外的意思，
 # 当成一种语气，不会去分析它。
 # 以 # 开头的行是注释。改完不用重启，下一条消息就生效。
+# 网上收集的图放进 private 文件夹（有它自己的 stickers.txt）：聊天里能用，但不会上传到 GitHub。
+# 暂时不想在聊天里用的，挪进 unused 文件夹：还留着，随时可以挪回来。
 #
 # Kurisu's stickers: one per line, "file = when to send it". The text after = is for the
 # language model. To add one, drop an image (png / gif / webp / jpg) into this folder and
 # add a line here; without a line, the file name is its meaning. Put when to send it in
 # brackets: she reads that when picking hers, but when you send one she gets only the part
 # outside them, as a tone, not something to analyse. No restart needed.
+# Images you collected go in the private folder (it has its own stickers.txt): used in the chat,
+# never uploaded to GitHub. To take one out of the chat for now, move it into the unused folder.
 
-hentai.webp = 骂对方变态，一脸嫌弃（对方说了下流或奇怪的话）
-ha.webp = は？——不可理喻，你在说什么
-fun.webp = 哼！闹别扭，扭头不理你
-betsuni.webp = 傲娇否认：“才、才不是呢”（被说中心事、被夸的时候）
-doya.webp = 得意洋洋，炫耀自己有多聪明（ドヤ顔）
-naruhodo.webp = 原来如此，认真思考，被说服了
-eh.webp = 诶？！吃惊，难以置信
+hentai.webp = 变态！一脸嫌弃（对方说怪话）
+ha.webp = 哈？不可理喻（无语反问）
+fun.webp = 哼！扭头不理（闹别扭）
+betsuni.webp = 才、才不是呢（被说中、被夸）
+doya.webp = 得意洋洋（炫耀聪明）
+naruhodo.webp = 原来如此（被说服）
+eh.webp = 诶？！（吃惊）
 ahaha.webp = 哈哈大笑
-tina.webp = 不许叫我克里斯蒂娜 / “蒂娜”！（被乱起外号）
-muu.webp = 鼓着脸郁闷，不高兴，有点委屈
-mugon.webp = 无语……（对方说了很蠢或很尴尬的话）
-baka.webp = 笨蛋！（又气又害羞）
-hatena.webp = 疑问，困惑，没听懂
-tereteru.webp = 害羞但嘴硬：“我才没有害羞”
-shobon.webp = 难过，失落，沮丧
-mukatsuku.webp = 真的生气了，火大
-fufu.webp = 开心地偷笑，很满意
-ryoukai.webp = 了解，好的，收到
-elpsy.webp = El Psy Kongroo，中二暗号（调侃对方中二，或者当作告别）
-oyasumi.webp = 晚安，困了
-drpepper.webp = Dr Pepper 最高！（聊到饮料，或者心情很好）
+tina.webp = 不许叫我蒂娜！（被乱起外号）
+muu.webp = 鼓着脸郁闷（委屈）
+mugon.webp = 无语……（对方很蠢）
+baka.webp = 笨蛋！（又气又羞）
+hatena.webp = 疑问（没听懂）
+tereteru.webp = 我才没有害羞（嘴硬）
+shobon.webp = 失落（难过）
+mukatsuku.webp = 火大（真生气了）
+fufu.webp = 偷笑（很满意）
+ryoukai.webp = 了解（收到）
+elpsy.webp = El Psy Kongroo（中二、告别）
+oyasumi.webp = 晚安（困了）
+drpepper.webp = Dr Pepper 最高！（心情好、聊饮料）

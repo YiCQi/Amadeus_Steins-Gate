@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kurisu's expressions</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 16px; background: #0b0c0e; color: #ddd; font: 14px/1.5 system-ui, "Microsoft YaHei", sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { margin: 0 0 16px; color: #999; max-width: 70ch; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+  figure { margin: 0; background: #15171a; border-radius: 10px; overflow: hidden; }
+  figure.compare { outline: 1px solid #c0394b; }
+  video { width: 100%; display: block; aspect-ratio: 500 / 550; background: #000; }
+  figcaption { padding: 6px 10px; display: flex; justify-content: space-between; gap: 8px; }
+  figcaption b { color: #fff; font-weight: 600; }
+  figcaption span { color: #888; }
+</style>
+</head>
+<body>
+<h1>Kurisu's expressions · 红莉栖的表情</h1>
+<p>每段 4 秒：先中性 0.6 秒，然后切换到表情，静止一会儿，2.2–3.4 秒在说话，最后再静止。只录了脸本身（WebGL 画面），
+不含叠加在上面的小特效（生气的井字、笑的闪光、问号、阴影线等）。红框是笑的几个版本：现在的（闭眼，眼线是平滑的弧）、
+眼线变形的旧版、笑眼版、最初一直抖的。想退回：http://127.0.0.1:8710/?lids=old 用旧的眼皮（会变形的那版），
+http://127.0.0.1:8710/?laugh=open 用笑眼版。
+Each clip: 0.6 s neutral, then the expression, held, talking from 2.2 to 3.4 s, held again. The face only:
+the small overlays drawn on top (anger mark, sparkles, question mark, gloom lines) aren't in these.</p>
+<div class="grid" id="grid"></div>
+<script>
+  const clips = [
+    ["laugh", "笑（现在：闭眼，弧线平滑）", "laugh, now"], ["laugh-closed-wavy", "笑（闭眼，眼线变形的旧版）", "laugh, wavy lids"],
+    ["laugh-open", "笑（笑眼版）", "laugh, crescent eyes"], ["laugh-before", "笑（最初：一直抖）", "laugh, first"],
+    ["neutral", "中性", "neutral"], ["smile", "微笑", "smile"], ["happy", "开心", "happy"],
+    ["smug", "得意", "smug"], ["annoyed", "不爽", "annoyed"], ["angry", "生气", "angry"], ["furious", "暴怒", "furious"],
+    ["pout", "闹别扭", "pout"], ["disgusted", "嫌弃", "disgusted"], ["embarrassed", "害羞", "embarrassed"],
+    ["sad", "难过", "sad"], ["surprised", "吃惊", "surprised"], ["puzzled", "疑惑", "puzzled"], ["thinking", "思考", "thinking"],
+  ];
+  const grid = document.getElementById("grid");
+  for (const [file, zh, en] of clips) {
+    const f = document.createElement("figure");
+    if (file.startsWith("laugh")) f.className = "compare";
+    f.innerHTML = `<video src="${file}.mp4" autoplay muted loop playsinline></video><figcaption><b>${zh}</b><span>${en}</span></figcaption>`;
+    grid.append(f);
+  }
+</script>
+</body>
+</html>

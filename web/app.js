@@ -2,6 +2,7 @@ import { createAvatar } from "./rig.js";
 import { setLang, t } from "./i18n.js";
 import { timeline } from "./lipsync.js";
 import { HandsFree } from "./call.js";
+import { setLevel, showLevel, toLevel } from "./level.js";
 import { Chat } from "./chat.js";
 import { ChatSearch } from "./search.js";
 import { MemoryPanel } from "./memory.js";
@@ -17,6 +18,14 @@ let settings = {};
 let audioCtx, analyser, gain;
 let currentSource = null;
 let generation = 0;           // bumps on interrupt so stale playback stops
+// this open page: a new turn cancels only its own unfinished lines on the server, not another tab's
+const PAGE = Math.random().toString(36).slice(2, 10);
+// The reply in progress while she still has something to say: { id, message, ctrl, spoke, logged }.
+// Until she starts speaking (spoke) it can be dropped, when a hands-free call hears you go on (dropTurn).
+let turn = null;
+// What you said before a pause, when you went on talking before she answered it: { text, retract }
+// (retract: the turn it was sent as, which the server then takes back). It goes out with what follows.
+let carry = null;
 let voiceWarned = false;
 let connected = false, greeted = false;
 
@@ -123,6 +132,18 @@ function stopSpeaking() {
   if (currentSource) { try { currentSource.stop(); } catch {} }
 }
 
+// In a hands-free call you went on talking before she said a word: what you'd said wasn't all of
+// it. Her reply is dropped (its request cancelled, so the server keeps none of it, and the log
+// forgets it) and the turn returned, for what you said to go out again with the rest.
+function dropTurn() {
+  const t = turn;
+  turn = null;
+  t.ctrl.abort();
+  stopSpeaking();
+  t.logged.forEach(li => li.remove());
+  return t;
+}
+
 // ---------------------------------------------------------------- subtitles
 
 let typeTimer;
@@ -179,14 +200,16 @@ function makeQueue() {
   };
 }
 
-// event: "connect" (the call just started) or "idle" (the line has gone quiet, idle s: she may speak up)
-async function converse({ message, event, idle }) {
+// event: "connect" (the call just started) or "idle" (the line has gone quiet, idle s: she may speak up);
+// retract: the turn whose message this one repeats with the rest (see dropTurn)
+async function converse({ message, event, idle, retract }) {
   stopSpeaking();
   const gen = generation;
+  const me = turn = { id: Math.random().toString(36).slice(2, 10), message, ctrl: new AbortController(), spoke: false, logged: [] };
   initAudio();
   if (audioCtx.state === "suspended") await audioCtx.resume();
 
-  if (message) { addLog({ role: "user", sub: message }); heard(); nudges = 0; }
+  if (message) { me.logged.push(addLog({ role: "user", sub: message })); heard(); nudges = 0; }
   if (event !== "idle") setStatus("thinking");   // speaking up unasked: no tell-tale pause first
   const t0 = performance.now();
   const timing = {};
@@ -210,6 +233,7 @@ async function converse({ message, event, idle }) {
         if (gen !== generation) return;
       }
       if (!timing.firstAudio) {
+        me.spoke = true;
         setStatus("speaking");
         timing.firstAudio = (performance.now() - t0) / 1000;
         timing.tts = buf?.ttsSeconds;
@@ -234,6 +258,7 @@ async function converse({ message, event, idle }) {
       prev = item;
       prevEnd = performance.now();
     }
+    if (turn === me) turn = null;   // all said
     if (gen !== generation) return;
     setStatus("online");
     await sleep(2500);
@@ -244,7 +269,8 @@ async function converse({ message, event, idle }) {
     const r = await api("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, event, idle }),
+      body: JSON.stringify({ message, event, idle, page: PAGE, turn: me.id, retract }),
+      signal: me.ctrl.signal,
     });
     const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
     let buf = "";
@@ -268,7 +294,7 @@ async function converse({ message, event, idle }) {
           const item = lines.get(data.id);
           if (item) {
             item.resolveSub(data.sub);
-            addLog({ role: "assistant", sub: data.sub, ja: item.ja });
+            me.logged.push(addLog({ role: "assistant", sub: data.sub, ja: item.ja }));
           }
         } else if (ev === "hangup") {
           hangup = true;
@@ -282,15 +308,18 @@ async function converse({ message, event, idle }) {
       }
     }
   } catch (e) {
-    if (event === "idle") console.warn("[call] she didn't get to speak up:", e.message);
-    else toast(t("amadeusErr", e.message), 8000);
-    setStatus("online");
+    if (!me.ctrl.signal.aborted) {   // (aborted: dropped, you went on talking)
+      if (event === "idle") console.warn("[call] she didn't get to speak up:", e.message);
+      else toast(t("amadeusErr", e.message), 8000);
+      setStatus("online");
+    }
   } finally {
     // a line cut off before its subtitle arrived still shows its Japanese
     for (const item of lines.values()) item.resolveSub(item.ja);
     queue.close();
   }
   await player;
+  if (turn === me) turn = null;
   if (gen === generation && timing.firstAudio) logTiming(timing);
   // she said her last word and hung up: a beat of silence, then the line goes dead
   if (hangup && gen === generation && connected) { await sleep(900); if (gen === generation) endCall("kurisu"); }
@@ -346,6 +375,7 @@ function addLog(m) {
   const list = $("#log-list");
   list.append(li);
   list.scrollTop = list.scrollHeight;
+  return li;
 }
 
 $("#btn-log").onclick = () => { $("#log").hidden = !$("#log").hidden; };
@@ -364,7 +394,7 @@ $("#bar").addEventListener("submit", e => {
 // Microphone: "local" records and sends audio to faster-whisper on the server,
 // "browser" uses the Web Speech API (Chrome / Edge).
 const mic = $("#btn-mic");
-let recorder = null, recognition = null;
+let recorder = null, recognition = null, micHinted = false;
 
 // Speech -> text on the server (faster-whisper); "" when nothing was understood.
 // quiet: no "didn't catch that" toast (hands-free mode hears coughs and door clicks too)
@@ -374,13 +404,18 @@ async function transcribe(blob, name, quiet = false) {
     const fd = new FormData();
     fd.append("audio", blob, name);
     const { text } = await (await api("/api/stt", { method: "POST", body: fd })).json();
-    if (!text) { if (!quiet) toast(t("notCaught")); setStatus("online"); }
+    if (!text) { if (!quiet) toast(t("notCaught")); settle(); }
     return text;
   } catch (e) {
     toast(t("sttFail", e.message));
-    setStatus("online");
+    settle();
     return "";
   }
+}
+
+// back to "online", unless you've started talking again meanwhile (hands-free)
+function settle() {
+  if (statusEl.dataset.state === "thinking") setStatus("online");
 }
 
 mic.onclick = async () => {
@@ -393,8 +428,10 @@ mic.onclick = async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
     const chunks = [];
     recorder = new MediaRecorder(stream);
+    const stopLevel = showLevel(stream, mic);   // the ring follows your voice while it records
     recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
     recorder.onstop = async () => {
+      stopLevel();
       stream.getTracks().forEach(t => t.stop());
       recorder = null;
       mic.classList.remove("rec");
@@ -406,6 +443,7 @@ mic.onclick = async () => {
     recorder.start();
     mic.classList.add("rec");
     setStatus("listening");
+    if (!micHinted) { toast(t("micHint"), 3500); micHinted = true; }
   } catch (e) {
     toast(location.protocol === "http:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1"
       ? t("micHttps")
@@ -413,29 +451,54 @@ mic.onclick = async () => {
   }
 };
 
-// Hands-free call (call.js): just talk; talking over her interrupts her
+// Hands-free call (call.js): just talk; talking over her interrupts her. A pause closes what you
+// said (call.js END) and she starts on her reply at once; if you go on before she has said a word,
+// you weren't done: her reply is dropped, and what you said goes out again with the rest.
 // (a page cached from before this button existed has no #btn-call: make one rather than crash)
 const callBtn = $("#btn-call") ?? Object.assign(document.createElement("button"), { type: "button", hidden: true });
+let shownLevel = 0, speechSeq = 0;
+
+// "我觉得。" + "这个……" -> "我觉得……这个……": the pause stays in it
+function joinSaid(a, b) {
+  if (!a || !b) return a || b || "";
+  return settings.language === "zh" ? a.replace(/[。.]$/, "……") + b : `${a.replace(/\.$/, "...")} ${b}`;
+}
+
 const call = new HandsFree({
   isBusy: () => !!currentSource,
+  onLevel: rms => { shownLevel = setLevel(callBtn, toLevel(rms), shownLevel); },
   onSpeechStart: () => {
-    if (currentSource) stopSpeaking();
+    speechSeq++;
+    if (turn && !turn.spoke) {         // she hadn't said a word yet: you weren't done
+      const t = dropTurn();
+      if (t.message) carry = { text: t.message, retract: t.id };
+    } else if (turn) stopSpeaking();   // talking over her stops her, between her lines too
     heard();
     callBtn.classList.add("hearing");
     setStatus("listening");
   },
   onUtterance: async wav => {
     callBtn.classList.remove("hearing");
-    if (!wav) { if (statusEl.dataset.state === "listening") setStatus("online"); armIdle(); return; }
-    const text = await transcribe(wav, "speech.wav", true);
-    if (text) converse({ message: text }); else armIdle();
+    const seq = speechSeq;
+    const text = wav ? await transcribe(wav, "speech.wav", true) : "";
+    if (seq !== speechSeq) {           // you went on talking while it was being recognised
+      if (text) carry = { text: joinSaid(carry?.text, text), retract: carry?.retract };
+      return;
+    }
+    const c = carry;
+    carry = null;
+    const message = joinSaid(c?.text, text);   // (a cough after a pause: what came before it, again)
+    if (message) converse({ message, retract: c?.retract });
+    else { if (statusEl.dataset.state === "listening") setStatus("online"); armIdle(); }
   },
 });
 
 callBtn.onclick = async () => {
   if (call.active) {
     call.stop();
+    carry = null;
     callBtn.classList.remove("live", "hearing");
+    callBtn.style.removeProperty("--level");
     mic.disabled = false;
     if (statusEl.dataset.state === "listening") setStatus("online");
     toast(t("callOff"), 2000);
@@ -573,7 +636,8 @@ async function endCall(by) {
   clearTimeout(idleTimer);
   nudges = 0;
   stopSpeaking();
-  if (call.active) { call.stop(); callBtn.classList.remove("live", "hearing"); mic.disabled = false; }
+  if (call.active) { call.stop(); callBtn.classList.remove("live", "hearing"); callBtn.style.removeProperty("--level"); mic.disabled = false; }
+  carry = null;
   hideSubtitle();
   setStatus("offline");
   const seconds = (Date.now() - callStart) / 1000;

@@ -117,6 +117,28 @@ def add(ch: str, role: str, content: str = "", **extra) -> dict:
     return entry
 
 
+def retract(ch: str, turn: str) -> int:
+    """Take back the message the user sent as `turn`, with her reply to it if one was recorded: in a
+    hands-free call they went on talking before she said a word, so it wasn't the end of what they
+    were saying, and it comes again with the rest. Returns how many entries were removed."""
+    entries = log()
+    at = next((i for i in range(len(entries) - 1, -1, -1) if turn and entries[i].get("turn") == turn
+               and entries[i]["ch"] == ch and entries[i]["role"] == "user"), None)
+    if at is None:
+        return 0
+    drop = {entries[at]["id"]}
+    for m in entries[at + 1:]:
+        if m["ch"] != ch:
+            continue
+        if m["role"] != "assistant":
+            break              # her reply to it only: whatever was said after that stays
+        drop.add(m["id"])
+    tmp = LOG.with_suffix(".tmp")
+    tmp.write_text("".join(json.dumps(m, ensure_ascii=False) + "\n" for m in entries if m["id"] not in drop), encoding="utf-8")
+    tmp.replace(LOG)
+    return len(drop)
+
+
 def migrate():
     """First run: bring the old separate call (history.json) and chat (chat.json) threads into one timeline."""
     if LOG.exists() or getattr(migrate, "done", False):

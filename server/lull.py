@@ -1,14 +1,17 @@
 """When the chat goes quiet: whether she texts first, and when, read from the conversation the
-way a person would:
+way a person would (on a call she checks in after half a minute or so; texting, a little later):
 
 - you said goodbye: she leaves you be for hours; after a good night, until the morning;
-- she asked you something and you haven't answered: she follows up after a few minutes, or, if
+- you said you'd be off doing something ("我去洗澡", "brb"): she checks in after half an hour or so;
+- she asked you something and you haven't answered: she follows up after a minute or two, or, if
   you'd gone, a few minutes after you open the chat again;
-- the chat just trailed off, or a call just ended: now and then she picks it up after a while;
+- the chat just trailed off, or a call just ended: she often picks it up after a few minutes,
+  less soon when it closed on its own ("好", "嗯");
 - you haven't talked for a long time: now and then a hello, some minutes after you open the chat.
 
-Never more than twice in a row without an answer. Nothing here asks the model anything: the
-model is only asked (one ordinary request) once a plan comes due, and may still stay quiet.
+Never more than twice in a row without an answer, and once she has decided to stay quiet, that
+holds until one of you writes. Nothing here asks the model anything: the model is only asked (one
+ordinary request) once a plan comes due, and may still stay quiet.
 """
 import random
 import re
@@ -22,7 +25,22 @@ FAREWELL = re.compile(
     r"\bbye\b|good ?night|\bgn\b|see (you|ya)|talk (to you )?later|\bttyl\b|gotta go|going to bed|"
     r"おやすみ|またね|じゃあね|さようなら|バイバイ|また明日", re.I)
 NIGHT = re.compile(r"晚安|睡了|睡觉|good ?night|\bgn\b|going to bed|おやすみ", re.I)
+# off to do something for a while (not "I went to eat yesterday": the doing is now)
+AWAY = re.compile(
+    r"(?:我|先|那我|我先|我现在|现在|这就|马上)就?(?:要|得)?去(?:洗澡|吃饭|做饭|上课|开会|上班|工作|写|忙|做|买|拿|跑步|健身)|"
+    r"先忙|忙去了|等我一下|等一下|稍等|马上回来|一会儿?回来|待会儿?(?:聊|见|回)|"
+    r"\bbrb\b|be right back|\bafk\b|gotta run|going to (?:shower|eat|cook|class|work)|"
+    r"ちょっと待って|行ってくる|すぐ戻る", re.I)
+# a reply that closes the exchange on its own
+ACK = re.compile(r"^\s*(?:好|好的|好吧|好嘞|嗯+|哦+|噢|行|可以|ok|okay|k|收到|了解|知道了|👌|👍)[。.!！~～]*\s*$", re.I)
 STALE = 3 * HOUR     # a plan this far past due is no longer what the moment calls for
+_declined = {"last": None}   # the last message when she chose to stay quiet: no asking again until something's said
+
+
+def decline():
+    """She was asked whether to text first and chose to stay quiet: leave it until someone writes."""
+    log = memory.log()
+    _declined["last"] = log[-1]["id"] if log else 0
 
 
 def _text(m: dict) -> str:
@@ -70,6 +88,8 @@ def plan(now: int | None = None) -> dict:
             wait = max(0, round((due - now) / 1000))
         return {"state": state, "wait": wait, "due": due, **extra}
 
+    if _declined["last"] == (log[-1]["id"] if log else 0):
+        return out("declined")             # she chose to stay quiet, and nothing has been said since
     if not said:
         return out("first", wait=180)      # never talked: a hello, a few minutes after the chat opens
     if _unanswered_lately(now) >= 2:
@@ -92,12 +112,19 @@ def plan(now: int | None = None) -> dict:
     elif now - since < HOUR:
         again = memory.unanswered("chat") > 0
         q = _question(last) if last["role"] == "assistant" else ""
+        theirs = [m for m in talked if m["role"] == "user"]
+        words = memory.said(theirs[-1], lambda s: s or "") if theirs else ""   # what they said last
+        if theirs and AWAY.search(words):   # gone to do something: she checks in once it's been a while
+            return out("away", since + int((rng.uniform(45, 90) if again else rng.uniform(20, 45)) * MIN),
+                       since=since, question=words[:60])
         if q:
-            return out("asked", since + int((rng.uniform(10, 20) if again else rng.uniform(2.5, 5)) * MIN), since=since, question=q)
+            return out("asked", since + int((rng.uniform(4, 8) if again else rng.uniform(1, 2.5)) * MIN), since=since, question=q)
         if log[-1]["role"] == "event" and log[-1].get("kind") == "call_end":
-            return out("after_call", since + int(rng.uniform(15, 30) * MIN), since=log[-1]["ts"]) if rng.random() < 0.5 else out("after_call")
-        if rng.random() < (0.4 if again else 0.6):
-            return out("lull", since + int((rng.uniform(20, 40) if again else rng.uniform(8, 15)) * MIN), since=since)
+            return out("after_call", since + int(rng.uniform(3, 8) * MIN), since=log[-1]["ts"]) if rng.random() < 0.6 else out("after_call")
+        closed = bool(theirs) and bool(ACK.match(words))   # "好" / "嗯": it came to a close by itself
+        chance, (lo, hi) = ((0.3, (15, 30)) if again else (0.5, (6, 12))) if closed else ((0.5, (5, 10)) if again else (0.75, (1.5, 3)))
+        if rng.random() < chance:
+            return out("lull", since + int(rng.uniform(lo, hi) * MIN), since=since)
         return out("lull")
     # it's been a long while (or the goodbye is long past)
     q = _question(last) if last["role"] == "assistant" and not bye and now - since < 3 * DAY else ""
@@ -110,4 +137,5 @@ def due_now(p: dict, now: int | None = None) -> bool:
     """Whether the plan allows her to text right now (the page counts the quiet; this keeps
     a stale page, or a second one open, from making her text early or twice)."""
     now = now or memory.now_ms()
-    return p["wait"] is not None and (p["due"] is None or p["due"] <= now + MIN)
+    # a little slack for the page's timer; with follow-ups a minute or two out, no more than that
+    return p["wait"] is not None and (p["due"] is None or p["due"] <= now + 15_000)

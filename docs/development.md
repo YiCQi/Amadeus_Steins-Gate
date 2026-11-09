@@ -43,7 +43,7 @@ web/                      UI (no build step)
   memory.js               the memory panel
   rig.js                  mesh rig renderer (WebGL) and motion
   lipsync.js              kana reading + audio -> mouth shape timeline
-  call.js                 hands-free call: voice activity detection, barge-in
+  call.js                 hands-free call: voice activity detection, barge-in (app.js joins up a pause that wasn't the end)
   avatar.js               sprite avatar (fallback)
   assets/kurisu/          sprites; rig/ = the built rig
   assets/stickers/        her stickers (add your own here) + stickers.txt

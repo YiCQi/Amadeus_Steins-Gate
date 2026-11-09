@@ -6,6 +6,7 @@
 // to decide whether and when (not after a goodbye; soon after a question of hers you left hanging).
 
 import { t } from "./i18n.js";
+import { showLevel } from "./level.js";
 
 const $ = s => document.querySelector(s);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -516,8 +517,10 @@ export class Chat {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
       const chunks = [];
       const rec = new MediaRecorder(stream);
+      const stopLevel = showLevel(stream, btn);   // the ring follows your voice while it records
       rec.ondataavailable = e => e.data.size && chunks.push(e.data);
       rec.onstop = async () => {
+        stopLevel();
         stream.getTracks().forEach(tr => tr.stop());
         this.rec = null;
         btn.classList.remove("rec");

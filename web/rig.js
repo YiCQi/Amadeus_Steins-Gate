@@ -53,6 +53,7 @@ const POSES = {
   neutral: {},
   smile: { eyeSmile: 0.3, eyeOpen: 0.96, mouthForm: 0.55, browY: 0.15, angleZ: 2.5, angleY: 1.5, cheek: 0.12 },
   happy: { eyeSmile: 0.6, mouthForm: 0.85, browY: 0.35, angleZ: 4, angleY: 2.5, cheek: 0.25 },
+  // eyes closed in a happy arc (^^); ?laugh=open squeezes them into crescents instead (笑眼), the iris showing
   laugh: { eyeSmile: 1, eyeOpen: 0.12, mouthForm: 1, mouthBase: 0.55, mouthWide: 0.3, browY: 0.45, browAngle: 0.2, angleY: 5, angleZ: 5, cheek: 0.45 },
   smug: { eyeOpen: 0.8, eyeSmile: 0.12, mouthForm: 0.7, mouthSkew: 0.6, angleY: 5, angleZ: -5, angleX: -4, browY: 0.15 },
   annoyed: { browAngle: -0.9, browY: -0.25, eyeOpen: 0.78, eyeAngry: 0.35, gazeX: -0.45, angleX: -11, angleZ: -2.5, angleY: 1.5, mouthForm: -0.55, cheek: 0.3 },
@@ -67,6 +68,11 @@ const POSES = {
   thinking: { gazeX: 0.55, gazeY: -0.65, angleZ: -5, angleX: 7, angleY: 4, browAngle: -0.25, browY: 0.1, mouthForm: -0.15 },
   listening: { angleZ: 3.5, angleY: -1.5, browY: 0.2, eyeOpen: 1.04, gazeY: 0.05 },   // UI state, not an LLM emotion
 };
+// the eyelids as they were before 2026-11-08 (a smiling, closed lash line bent into a wave): ?lids=old
+const OLD_LIDS = typeof location !== "undefined" && new URLSearchParams(location.search).get("lids") === "old";
+// the laugh with crescent eyes instead, for comparing: open the page with ?laugh=open
+if (typeof location !== "undefined" && new URLSearchParams(location.search).get("laugh") === "open")
+  Object.assign(POSES.laugh, { eyeSmile: 0.9, eyeOpen: 0.45 });
 // how hard a new expression jolts the hair (default 0.4)
 const HAIR_KICK = { neutral: 0.2, listening: 0.15, sad: 0.25, thinking: 0.3, smile: 0.3, puzzled: 0.35, pout: 0.5,
   surprised: 1, furious: 1, angry: 0.9, annoyed: 0.8, laugh: 0.8, happy: 0.7, embarrassed: 0.6 };
@@ -109,11 +115,13 @@ class Motion {
   live(out, t, since, silent) {
     const name = this.poseName, s = this.seed;
     if (name === "laugh") {
-      const a = 2.2 * (0.45 + 0.55 * Math.exp(-since / 1.6)), ph = 2 * Math.PI * 3.3 * t;
-      out.angleY += a * (Math.abs(Math.sin(ph)) - 0.64);
-      out.angleZ += 0.35 * a * Math.sin(ph);
-      out.hairY += 2.5 * a * Math.abs(Math.sin(ph));
-      if (silent) out.mouthOpen += 0.12 * Math.abs(Math.sin(ph));
+      // a burst of chuckles as the laugh lands, settling within a second into a broad smile (it
+      // used to keep shaking her, at a third of the strength, for as long as the line lasted)
+      const a = 1.6 * Math.exp(-since / 0.45), bob = Math.abs(Math.sin(2 * Math.PI * 2.4 * t));
+      out.angleY += a * (bob - 0.64);
+      out.angleZ += 0.3 * a * Math.sin(2 * Math.PI * 2.4 * t);
+      out.hairY += 2 * a * bob;
+      if (silent) out.mouthOpen += 0.1 * Math.exp(-since / 0.6) * bob;
     } else if (name === "furious" || name === "angry") {
       // a short shudder as it lands, gone within a second
       const a = (name === "furious" ? 0.5 : 0.25) * Math.exp(-since / 0.35);
@@ -381,7 +389,9 @@ class Rig {
         const lashTop = e.lashTop ? interp(e.xs, e.lashTop, x) : T[k] - e.h * 0.3;
         FU[k] = y >= lashTop - 2 ? 1 : lerp(1, 0.35, smoothstep(lashTop - 2, lashTop - 2 - e.h * 0.35, y));
       }
-      m.lid = { e, T, B, U, G, FU };
+      // the eye's full height, in the middle: what a smiling lid moves by (see deform)
+      const Hc = Math.max(...e.xs.map((_, i) => e.bot[i] - e.top[i]));
+      m.lid = { e, T, B, U, G, FU, Hc };
     }
     if (m.tag === "irides" && this.eyes[m.side]) m.iris = this.eyes[m.side];
     if (m.tag === "eyebrow" && this.brows[m.side]) {
@@ -478,9 +488,14 @@ class Rig {
       cr: Math.cos(P.angleZ * DEG), sr: Math.sin(P.angleZ * DEG),
       bc: Math.cos(P.bodyZ * DEG), bs: Math.sin(P.bodyZ * DEG),
     };
-    // the eye white fades as the lids meet, so its soft rim never shows as a line under a closed eye
+    // the eye white fades as the lids meet, so its soft rim never shows as a line under a closed eye;
+    // so does the iris, a little later: clipped to the white, it showed as a blue band under the
+    // closed lids of a laugh (^^)
     const opening = P.eyeOpen * (1 - 0.55 * P.eyeSmile);
-    for (const m of this.meshes) if (m.tag === "eyewhite") m.alpha = smoothstep(0.03, 0.2, opening);
+    for (const m of this.meshes) {
+      if (m.tag === "eyewhite") m.alpha = smoothstep(0.03, 0.2, opening);
+      else if (m.tag === "irides") m.alpha = smoothstep(0.05, 0.16, opening);
+    }
     for (const m of this.meshes) this.deform(m, P);
     for (const m of this.extras) this.deform(m, P);
   }
@@ -504,11 +519,15 @@ class Rig {
 
       if (lid) {
         const T = lid.T[k], B = lid.B[k], u = lid.U[k], Hl = B - T;
-        // where the lids meet when closed: low for a blink, an upward arch (^) when smiling
-        const L = T + Hl * lerp(0.8, 0.3 + 0.45 * u * u, smile);
+        // where the lids meet when closed: low for a blink (following the eye's shape), an upward
+        // arch (^) when smiling. The arch is measured on the eye's full height (Hc), not the height
+        // at this point: the eye narrows to almost nothing at its corners, and measured there the
+        // lash line dropped less at the very corners than just inside them, a wave with a hook.
+        const L = OLD_LIDS ? T + Hl * lerp(0.8, 0.3 + 0.45 * u * u, smile)
+          : T + lerp(Hl * 0.8, lid.Hc * (0.27 + 0.18 * u * u), smile);
         // smiling pushes the lower lid up into an arch (most in the middle) even while
         // the eye is open; the upper lid only drops a little
-        const Ts = T + Hl * 0.08 * smile, Bs = B - Hl * smile * (0.5 - 0.3 * u * u);
+        const Ts = T + (OLD_LIDS ? Hl : lid.Hc) * 0.08 * smile, Bs = B - Hl * smile * (0.5 - 0.3 * u * u);
         let Tn, Bn;
         if (open <= 1) { Tn = Ts + (L - Ts) * (1 - open); Bn = Bs + (L - Bs) * (1 - open); }
         else { Tn = T - (open - 1) * Hl * 0.9; Bn = B + (open - 1) * Hl * 0.12; }
