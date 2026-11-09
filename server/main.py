@@ -97,6 +97,9 @@ class ChatIn(BaseModel):
 
 # Turns taken back while their reply may still be running: whatever it was, it didn't happen.
 retracted: deque[str] = deque(maxlen=50)
+# Her replies being written, by turn: recorded whole once written, unless she is cut off first
+# (/api/call/said), and then only as far as she got.
+replies: dict[str, dict] = {}
 
 
 @app.post("/api/chat")
@@ -107,6 +110,8 @@ async def chat(body: ChatIn):
     if body.retract:
         # hands-free: they paused, then went on talking before she said a word; this message has it all
         retracted.append(body.retract)
+        if body.retract in replies:
+            replies[body.retract]["done"] = True
         try:
             n = memory.retract("call", body.retract)
             print(f"[call] went on talking after a pause: the first part is sent again with the rest ({n} log entries taken back)", flush=True)
@@ -140,11 +145,27 @@ async def chat(body: ChatIn):
     if unfinished:
         print(f"[voice] {unfinished} unfinished line(s) dropped: a newer turn ({body.event or 'message'}) came in", flush=True)
 
+    # kept: her lines so far; line: the one being written (she may already be saying it: its
+    # voice starts as soon as its Japanese is there)
+    reply = {"kept": [], "line": "", "feelings": [], "done": False, "idle": round(body.idle) if idle else None}
+    if body.turn:
+        replies[body.turn] = reply
+
     async def events():
+        try:
+            async for ev in reply_events():
+                yield ev
+        finally:
+            if body.turn and reply["done"]:
+                replies.pop(body.turn, None)
+            elif body.turn:   # the page hung up midway: word of how far she got may still be on its way
+                asyncio.get_running_loop().call_later(30, replies.pop, body.turn, None)
+
+    async def reply_events():
         t0 = time.perf_counter()
         timing: dict[str, float] = {}
         mark = lambda key: timing.setdefault(key, round(time.perf_counter() - t0, 2))  # noqa: E731
-        line, kept, feelings = "", [], []
+        line, kept, feelings = "", reply["kept"], reply["feelings"]
         early = None  # voice id already started for the line being streamed
 
         def finish(text: str):
@@ -166,7 +187,8 @@ async def chat(body: ChatIn):
                 # Chinese written where the Japanese goes: her voice would read it as gibberish
                 say = seg["ja"] if persona.speakable_japanese(seg["ja"]) else ""
                 vid = start_voice(say, seg["emotion"], body.page)
-                yield sse("voice", {"id": vid, "emotion": seg["emotion"], "ja": say, "kana": kana.reading(speakable(say)) if say else ""})
+                yield sse("voice", {"id": vid, "n": len(kept) - 1, "emotion": seg["emotion"], "ja": say,
+                                    "kana": kana.reading(speakable(say)) if say else ""})
             yield sse("segment", {"id": vid, "sub": seg["sub"]})
 
         try:
@@ -177,6 +199,7 @@ async def chat(body: ChatIn):
                     done, line = line.split("\n", 1)
                     for ev in finish(done):
                         yield ev
+                reply["line"] = line
                 # "emotion|Japanese|" is enough to start the voice; the subtitle can follow.
                 if early is None and line.count("|") >= 2 and len(kept) < CALL_MAX:
                     emotion, ja = line.split("|")[:2]
@@ -184,7 +207,7 @@ async def chat(body: ChatIn):
                     if persona.looks_japanese(ja):
                         mark("first_voice_text")
                         early = start_voice(ja, persona.norm_emotion(emotion), body.page)
-                        yield sse("voice", {"id": early, "emotion": persona.norm_emotion(emotion), "ja": ja,
+                        yield sse("voice", {"id": early, "n": len(kept), "emotion": persona.norm_emotion(emotion), "ja": ja,
                                             "kana": kana.reading(speakable(ja))})
             for ev in finish(line):
                 yield ev
@@ -197,16 +220,61 @@ async def chat(body: ChatIn):
         mark("total")
         timing.setdefault("first_voice_text", timing.get("first_line"))
         print("[timing]", "  ".join(f"{k}={v}s" for k, v in timing.items()), flush=True)
-        if body.turn and body.turn in retracted:   # taken back while this was being written
+        if reply["done"] or (body.turn and body.turn in retracted):   # cut off or taken back while being written
             return
+        reply["done"] = True
         if kept:
-            memory.add("call", "assistant", "\n".join(kept), **({"idle": round(body.idle)} if idle else {}))
+            memory.add("call", "assistant", "\n".join(kept), **({"turn": body.turn} if body.turn else {}),
+                       **({"idle": round(body.idle)} if idle else {}))
             yield sse("mood", {"value": memory.feel(feelings)})
         yield sse("done", {"timing": timing})
         if kept or not idle:
             remember_later(settings, language)
 
     return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+
+class SaidIn(BaseModel):
+    turn: str
+    lines: int = 0       # how many of her lines she had started on
+    midway: bool = False  # the last of them was cut off while she was saying it
+
+
+@app.post("/api/call/said")
+async def call_said(body: SaidIn):
+    """She was cut off mid-reply (talked over, a new message, the call hung up): she only got to say
+    her first `lines` lines. Her reply is kept that far and no further, whether it is still being
+    written (the page has stopped that request) or was already recorded whole."""
+    reply = replies.get(body.turn)
+    if reply is not None and not reply["done"]:
+        reply["done"] = True
+        # the line being written counts once she was saying it: its Japanese is all there, its
+        # subtitle as far as it got, and like her the line breaks off (——)
+        part = reply["line"].split("|")
+        written = reply["kept"] + ([reply["line"]] if len(part) >= 3 and part[1].strip() else [])
+        said = persona.cut_short(written[:body.lines], body.midway or body.lines > len(reply["kept"]))
+        if said:
+            memory.add("call", "assistant", "\n".join(said), turn=body.turn,
+                       **({"idle": reply["idle"]} if reply["idle"] is not None else {}))
+            memory.feel(reply["feelings"][:len(said)])
+            settings = config.load_settings()
+            remember_later(settings, settings.get("language", "en"))
+    else:
+        entry = memory.reply_in("call", body.turn)
+        if entry is None:
+            return {"kept": 0}
+        lines = entry["content"].split("\n")
+        if body.lines >= len(lines) and not body.midway:
+            return {"kept": len(lines)}
+        said = persona.cut_short(lines[:body.lines], body.midway)
+        try:
+            memory.revise(entry["id"], "\n".join(said) if said else None)
+        except OSError as e:   # the log briefly locked: her whole reply just stays in it
+            print(f"[call] couldn't cut her reply short ({e})", flush=True)
+            return {"kept": len(lines)}
+    print(f"[call] she was cut off after {body.lines} line(s){', midway through the last' if body.midway and said else ''}:"
+          f" only that much is kept", flush=True)
+    return {"kept": len(said)}
 
 
 class CallEndIn(BaseModel):

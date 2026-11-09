@@ -281,6 +281,16 @@ def format_line(seg: dict) -> str:
     return f"{seg['emotion']}|{seg['ja']}|{seg['sub']}"
 
 
+def cut_short(lines: list[str], midway: bool) -> list[str]:
+    """Her lines as far as she got when she was cut off; the last one ends in —— when it was cut
+    while she was saying it, so she knows she was interrupted."""
+    seg = parse_line(lines[-1]) if lines and midway else None
+    if not seg:
+        return lines
+    end = lambda s: re.sub(r"[。．.！!？?…、,\s]+$", "", s) + "——"  # noqa: E731
+    return lines[:-1] + [format_line({**seg, "ja": end(seg["ja"]), "sub": end(seg["sub"])})]
+
+
 def normalize_reply(content: str) -> str:
     """Rewrite a stored reply in the current line format, so history never teaches the old order."""
     segs = (parse_line(line) for line in content.splitlines())

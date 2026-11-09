@@ -144,6 +144,23 @@ function dropTurn() {
   return t;
 }
 
+// She was cut off mid-reply (talked over, the mic, a new message, the call hung up): her request
+// stops, so the model stops writing, and the server keeps only the lines she got to say, the last
+// marked as cut off if she was in the middle of it. Settles when the server has it.
+function cutTurn() {
+  const t = turn;
+  if (!t) return Promise.resolve();
+  turn = null;
+  const lines = t.said, midway = t.playing;
+  t.ctrl.abort();
+  stopSpeaking();
+  t.mine.slice(lines).forEach(li => li.remove());   // the log forgets what she never said
+  return api("/api/call/said", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ turn: t.id, lines, midway }),
+  }).catch(e => console.warn("[call] couldn't say where she was cut off:", e.message));
+}
+
 // ---------------------------------------------------------------- subtitles
 
 let typeTimer;
@@ -203,9 +220,13 @@ function makeQueue() {
 // event: "connect" (the call just started) or "idle" (the line has gone quiet, idle s: she may speak up);
 // retract: the turn whose message this one repeats with the rest (see dropTurn)
 async function converse({ message, event, idle, retract }) {
+  const cut = cutTurn();   // she was still answering the last one: it ends where she got to
   stopSpeaking();
   const gen = generation;
-  const me = turn = { id: Math.random().toString(36).slice(2, 10), message, ctrl: new AbortController(), spoke: false, logged: [] };
+  // said: how many of her lines she has started on; playing: one is being said right now;
+  // logged: this turn's lines in the log (mine: hers, in order)
+  const me = turn = { id: Math.random().toString(36).slice(2, 10), message, ctrl: new AbortController(),
+    spoke: false, said: 0, playing: false, logged: [], mine: [] };
   initAudio();
   if (audioCtx.state === "suspended") await audioCtx.resume();
 
@@ -239,6 +260,8 @@ async function converse({ message, event, idle, retract }) {
         timing.tts = buf?.ttsSeconds;
       }
       current = item;
+      me.said = item.n == null ? me.said + 1 : Math.max(me.said, item.n + 1);
+      me.playing = true;
       avatar.setExpression(item.emotion);
       if (buf) {
         const started = performance.now();
@@ -254,6 +277,7 @@ async function converse({ message, event, idle, retract }) {
         showSubtitle(text, item.ja, dur);
         await avatar.fakeTalk(dur);
       }
+      me.playing = false;
       if (gen !== generation) return;
       prev = item;
       prevEnd = performance.now();
@@ -266,6 +290,7 @@ async function converse({ message, event, idle, retract }) {
   })();
 
   try {
+    await cut;   // the server knows where she was cut off before it reads the conversation again
     const r = await api("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -294,7 +319,9 @@ async function converse({ message, event, idle, retract }) {
           const item = lines.get(data.id);
           if (item) {
             item.resolveSub(data.sub);
-            me.logged.push(addLog({ role: "assistant", sub: data.sub, ja: item.ja }));
+            const li = addLog({ role: "assistant", sub: data.sub, ja: item.ja });
+            me.logged.push(li);
+            me.mine.push(li);
           }
         } else if (ev === "hangup") {
           hangup = true;
@@ -421,6 +448,7 @@ function settle() {
 mic.onclick = async () => {
   if (recorder) { recorder.stop(); return; }
   if (recognition) { recognition.stop(); return; }
+  cutTurn();   // pressing the mic while she talks cuts her off
   stopSpeaking();
   heard();
   if (settings.stt_mode === "browser") return startBrowserSTT();
@@ -472,7 +500,7 @@ const call = new HandsFree({
     if (turn && !turn.spoke) {         // she hadn't said a word yet: you weren't done
       const t = dropTurn();
       if (t.message) carry = { text: t.message, retract: t.id };
-    } else if (turn) stopSpeaking();   // talking over her stops her, between her lines too
+    } else if (turn) cutTurn();        // talking over her stops her, between her lines too
     heard();
     callBtn.classList.add("hearing");
     setStatus("listening");
@@ -635,6 +663,7 @@ async function endCall(by) {
   greeted = false;
   clearTimeout(idleTimer);
   nudges = 0;
+  const cut = cutTurn();   // hung up on her mid-reply: only what she said goes into her memory
   stopSpeaking();
   if (call.active) { call.stop(); callBtn.classList.remove("live", "hearing"); callBtn.style.removeProperty("--level"); mic.disabled = false; }
   carry = null;
@@ -644,6 +673,7 @@ async function endCall(by) {
   toast(t(by === "kurisu" ? "herHangup" : "callEnded"), 2500);
   let rec = { role: "event", kind: "call", seconds, by, ts: Date.now() };
   try {
+    await cut;   // her reply, cut short, before the end of the call in the log
     rec = await (await api("/api/call/end", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ seconds, by }) })).json();
   } catch {}
   await sleep(by === "kurisu" ? 1200 : 400);

@@ -17,6 +17,8 @@ text / mic ──► /api/stt ──────────────► fast
 
 On a call the model replies one sentence per line as `emotion|Japanese|subtitle`; in the chat, one bubble per line as `text|emotion|message`, `sticker|name` or `voice|emotion|Japanese|translation`. Each spoken line is voiced as soon as its Japanese arrives, so she starts talking before the whole reply has finished generating.
 
+Her reply goes into her memory once it has been written, unless she is cut off first: then the page stops the request (so the model stops writing) and tells `/api/call/said` how many of her lines she had started on, and her reply is kept only that far, whether it was still being written or already recorded. A line she was in the middle of ends in `——`, so she knows she was interrupted. In a hands-free call, going on talking before she has said a word drops her reply instead, and the next message takes the place of the unanswered one (`retract`).
+
 ## Files
 
 ```

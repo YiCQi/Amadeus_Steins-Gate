@@ -8,6 +8,8 @@
 
 The app opens on the chat. She texts in your subtitle language, sends stickers, and now and then a short Japanese voice message (tap it to play; the translation is under it). The camera button calls her; the red button hangs up, and she can hang up on you too: after saying goodbye, or when she's had enough. Each call ends up in the chat as a record with its length.
 
+**Cutting her off.** You can talk over her, press the mic, send a message or hang up while she's still talking. Her reply then stops there, and she remembers only what she got to say, so later she won't think she told you the rest. A line she was in the middle of is remembered as broken off ("こんばんは——"), so she knows you interrupted her.
+
 **She speaks up on her own.** While the chat is open (in a background tab too; its title then counts her unread messages), she goes by how the conversation went quiet, the way a person would (`server/lull.py`):
 
 - she asked you something and you haven't answered: she follows up after a minute or two (or, if you'd gone, a few minutes after you're back);
@@ -26,7 +28,19 @@ Two folders in there are special. **`private/`** is yours alone: what you put th
 
 ## Speed
 
-- **"Thinking" (reasoning) models** can think for 10–30 s before saying a word. Set **Settings → Reasoning effort → low**, or pick a non-reasoning model.
+- **"Thinking" (reasoning) models** can think for tens of seconds before saying a word: on one service we measured 15–120 s at its default effort, against about 1.2 s at low. Set **Settings → Reasoning effort → low**, or pick a non-reasoning model. A value the service doesn't support may be treated as its default (there, "minimal" and "none" were as slow as the default).
+- **Where the time goes on a call**, measured with a reasoning model at low effort and an NVIDIA GPU, counted from your last word:
+
+  | Step | Time |
+  |---|---|
+  | Hands-free hears that you've finished | about 0.5 s |
+  | Speech recognition | 0.15 s |
+  | The model's first word | about 1.2 s (median; 1.05–2.6 s) |
+  | Her first line's Japanese is written | about 0.3 s more |
+  | Her voice for it | about 0.12 s (0.4 s on a CPU) |
+  | **In all** | **about 2.3 s** |
+
+  Most of the model's 1.2 s is the service's own time: it answered a two-line prompt in about 1.1 s too. The app's part (building the prompt with her memory) takes 0.02 s.
 - Her first line is kept short, and synthesis of each line starts as soon as its Japanese text is written, before its subtitle arrives.
 - After each reply, the log shows a ⏱ line: how long until she started speaking, how long the model took to write her first line, and how long synthesis took. The server terminal prints the same numbers as `[timing]`.
 - Local voices are faster: the Amadeus voice takes about 0.3–0.8 s a line on the CPU (well under 0.1 s on an NVIDIA GPU) and GPT-SoVITS about 0.3–0.5 s, versus about 1–1.4 s for the online fallback.

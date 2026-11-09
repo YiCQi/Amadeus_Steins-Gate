@@ -133,10 +133,25 @@ def retract(ch: str, turn: str) -> int:
         if m["role"] != "assistant":
             break              # her reply to it only: whatever was said after that stays
         drop.add(m["id"])
-    tmp = LOG.with_suffix(".tmp")
-    tmp.write_text("".join(json.dumps(m, ensure_ascii=False) + "\n" for m in entries if m["id"] not in drop), encoding="utf-8")
-    tmp.replace(LOG)
+    _rewrite([m for m in entries if m["id"] not in drop])
     return len(drop)
+
+
+def reply_in(ch: str, turn: str) -> dict | None:
+    """Her recorded reply in the turn the page sent as `turn`, if there is one."""
+    return next((m for m in reversed(log()) if turn and m.get("turn") == turn and m["ch"] == ch and m["role"] == "assistant"), None)
+
+
+def revise(eid: int, content: str | None):
+    """Rewrite one message of the log, or remove it (None): her reply cut short to what she said."""
+    _rewrite([{**m, "content": content} if m["id"] == eid else m for m in log() if not (m["id"] == eid and content is None)])
+
+
+def _rewrite(entries: list[dict]):
+    """The log is only ever appended to, except for these corrections: written whole, then swapped in."""
+    tmp = LOG.with_suffix(".tmp")
+    tmp.write_text("".join(json.dumps(m, ensure_ascii=False) + "\n" for m in entries), encoding="utf-8")
+    tmp.replace(LOG)
 
 
 def migrate():
