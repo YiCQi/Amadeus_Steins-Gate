@@ -93,8 +93,11 @@ Then text her, or press the camera button for a video call.
 | [How it works](docs/development.md) | the architecture, and what every file does |
 | [Troubleshooting](docs/troubleshooting.md) | when something doesn't work |
 
+## License
+
+The code is under the [MIT license](LICENSE). Steins;Gate, Makise Kurisu, her likeness and her voice (Asami Imai) belong to their rights holders, and the MIT license doesn't cover them: not her portrait, nor the rig, stickers and pictures made from it. This is a non-commercial fan project, not affiliated with the rights holders. Don't sell her likeness or use it commercially, and don't redistribute recordings of her voice. Third-party software and models aren't included: setup downloads them, each under its own license. [NOTICE.md](NOTICE.md) has the details.
+
 ## Credits
 
 - Voice model: [mio/amadeus](https://huggingface.co/mio/amadeus) by mio, licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) (ESPnet VITS). The installer downloads it from Hugging Face; it is not bundled with this project.
-- Layer decomposition: [See-through](https://github.com/shitagaki-lab/see-through) (Apache-2.0). Kana readings: [pykakasi](https://codeberg.org/miurahr/pykakasi). Recall by meaning: [multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small) (MIT), in the [ONNX build](https://huggingface.co/Xenova/multilingual-e5-small) downloaded on first run.
-- Steins;Gate, Makise Kurisu, her likeness and her voice (Asami Imai) belong to their rights holders. This is a non-commercial fan project; don't sell it or redistribute recordings of her voice.
+- Layer decomposition: [See-through](https://github.com/shitagaki-lab/see-through) (Apache-2.0). Kana readings: [pykakasi](https://codeberg.org/miurahr/pykakasi) (GPL-3.0). Recall by meaning: [multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small) (MIT), in the [ONNX build](https://huggingface.co/Xenova/multilingual-e5-small) downloaded on first run. Speech recognition: [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (MIT).

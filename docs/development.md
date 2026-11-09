@@ -22,6 +22,7 @@ On a call the model replies one sentence per line as `emotion|Japanese|subtitle`
 ```
 start.bat / run.py        launcher
 config.example.toml       copy → config.toml (start.bat does this)
+LICENSE / NOTICE.md       MIT for the code; what it doesn't cover (her likeness), third-party licenses
 server/
   main.py                 FastAPI routes, SSE streaming (call and text chat)
   memory.py               her memory: timeline, consolidation, merging, recall, fading, forgetting, mood
