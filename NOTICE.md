@@ -15,7 +15,22 @@ Steins;Gate, Steins;Gate 0, Makise Kurisu, her likeness and her voice (Asami Ima
 - `web/assets/stickers/`: her stickers, rendered from the rig;
 - `docs/media/`: pictures and clips of the app, which show her.
 
+The Rine stickers (below) are game art too.
+
 This is a non-commercial fan project, not affiliated with or endorsed by the rights holders. Don't sell this material or use it commercially, and don't redistribute recordings of her voice. To build something of your own on this code, rig a portrait you have the rights to ([docs/face.md](docs/face.md) shows how).
+
+## The Rine stickers
+
+`web/assets/stickers/sg0/` holds the 40 stickers of STEINS;GATE 0's in-game chat app, Rine:
+- **Chinese localization:** by [幸运的兔脚](https://rabbitfeet.net/) ([its release](https://rabbitfeet.net/archives/chinese-steins-gate-0-line-sticker/)).
+- **Taken from:** [Shennoter/astrbot-meme-pack-steins-gate-0](https://github.com/Shennoter/astrbot-meme-pack-steins-gate-0), which collected them.
+- **License:** [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/); see `LICENSE.md` and `ATTRIBUTION.md` in that folder. It covers only what its licensors could license; the game's art belongs to its rights holders.
+- **What this project did:**
+  - included the images unchanged;
+  - wrote the descriptions in that folder's `stickers.txt`;
+  - made `docs/media/rine-stickers.webp`, a reduced preview of all 40, shared under the same license.
+
+Like the rest of the Steins;Gate material, they aren't under the MIT license, and they're for non-commercial use only.
 
 ## Third-party software and models
 

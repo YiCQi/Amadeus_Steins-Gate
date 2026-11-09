@@ -1,0 +1,43 @@
+# 命运石之门0 游戏内 Rine 表情（40 张），图片原样取自 github.com/Shennoter/astrbot-meme-pack-steins-gate-0 。汉化：幸运的兔脚 https://rabbitfeet.net/
+# 许可 CC BY-NC-SA 4.0（见 LICENSE.md、ATTRIBUTION.md），不属于本项目的 MIT 许可；原作美术归权利人所有，仅限非商业使用。下面的说明是本项目写的。格式：谁：说了什么（什么时候发）
+
+01-ok.png = 冈部：OK啦！（答应）
+02-congratulations.png = 真由理：恭喜恭喜（祝贺）
+03-happy-tears.png = 达鲁：感动到哭（太好了）
+04-refuse.png = 红莉栖：但我拒绝！（拒绝）
+05-nice-to-meet-you.png = 萌郁：请多指教（初次见面）
+06-please.png = 琉华：拜托您了（请求）
+07-thank-you.png = 菲利斯：感谢喵（道谢）
+08-hmph.png = 铃羽：哼哼哒（不满、傲娇）
+09-good-night.png = 真帆：哦呀斯咪（晚安）
+10-blushing-turn.png = 红莉栖：脸红别过头（害羞）
+11-delicious-meal.png = 铃羽：开饭啦（吃饭）
+12-good-morning.png = 铃羽：哦哈哟！（早安）
+13-are-you-ok.png = 篝：没事吧？（关心对方）
+14-feeling-shy.png = 乌帕：害羞啦（不好意思）
+15-headache.png = 青蛙：头疼呢（为难）
+16-party-time.png = 吉祥物：嗨起来了！（庆祝）
+17-huh.png = 冈部：哈啊？（没听懂）
+18-thinking.png = 真由理：发呆思考（困惑）
+19-daydreaming.png = 达鲁：妄想中（幻想）
+20-hello-amadeus.png = 红莉栖：很高兴认识你（初次见面）
+21-please-forgive-me.png = 萌郁：对不起请原谅（道歉）
+22-ward-off-bad-luck.png = 琉华：驱邪祈福（求平安）
+23-omurice.png = 菲利斯：蛋包饭（请吃饭）
+24-im-serious.png = 铃羽：我是认真的！（郑重表态）
+25-shocked-maho.png = 真帆：震惊（意外）
+26-see-you.png = 红莉栖：再见啦（告别）
+27-wobbling-fish.png = 鱼：摇摇晃晃（搞怪）
+28-frog-thinking.png = 青蛙：嗯……（犹豫）
+29-how-about-that.png = 吉祥物：咋样啊（得意）
+30-coffee-break.png = 冈部：喝咖啡（休息）
+31-heart-maid.png = 真由理：比心（喜欢）
+32-deep-apology.png = 达鲁：土下座（郑重道歉）
+33-online.png = 红莉栖：在上网逛论坛（在线）
+34-on-my-way.png = 铃羽：在路上了哟（出发）
+35-need-rest.png = 真帆：累趴了（要休息）
+36-watching-tv.png = 红莉栖：看电视（摸鱼）
+37-what-panda.png = 乌帕：！？（震惊）
+38-dramatic-entrance.png = 羊驼：登场！（打招呼）
+39-throwing-a-tantrum.png = 吉祥物：闹腾闹腾（闹脾气）
+40-happy-dance.png = 吉祥物：开心跳舞（开心）

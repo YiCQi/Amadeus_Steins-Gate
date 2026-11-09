@@ -6,6 +6,7 @@
 # 当成一种语气，不会去分析它。
 # 以 # 开头的行是注释。改完不用重启，下一条消息就生效。
 # 网上收集的图放进 private 文件夹（有它自己的 stickers.txt）：聊天里能用，但不会上传到 GitHub。
+# sg0 文件夹是命运石之门0 游戏内的 Rine 表情（40 张，CC BY-NC-SA 4.0，见其中的 LICENSE.md）。
 # 暂时不想在聊天里用的，挪进 unused 文件夹：还留着，随时可以挪回来。
 #
 # Kurisu's stickers: one per line, "file = when to send it". The text after = is for the
