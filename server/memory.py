@@ -13,9 +13,19 @@
   felt, and the facts it taught her about you. Episodes then merge as they age: a day's into
   that day, later into that week and that month, so they don't pile up. Unforgettable ones
   stay on their own.
+- Sorting a conversation away is held back while the next one is still finding its feet, and
+  its last few messages stay readable for a while afterwards (TAIL_KEPT), because the first
+  thing you say on coming back is so often an answer to the last thing said. A message of hers
+  you never answered is kept in the gist by name, instead of being dropped as a loose end.
 - Episodes fade with time unless they come up again; each recall makes one last longer (the
   spacing effect). A faded one isn't gone: it is a deep memory, and a strong enough reminder
   brings it back. She is told only what this moment reminds her of, so the prompt stays small.
+- How she felt is part of how she remembers. How worked up she was over a conversation
+  (felt_arousal: the emotion she tagged her own lines with, at its peak and at the end) makes
+  the memory of it last longer, and counts for a little in how much it mattered. Fading then
+  takes the details first and the feeling last, so a memory she has nearly lost still comes
+  back as a feeling with a topic attached: "I don't remember what we said, only that it
+  left me in a good mood."
 - Forgetting is selective and reversible: a forgotten episode or fact is sealed, kept in the
   archive but out of her reach, until it is restored.
 - Her mood (0..1) moves with how each reply felt to her and drifts back to her usual self
@@ -37,6 +47,14 @@ LOG, STATE, EPISODES, FACTS = (DIR / n for n in ("log.jsonl", "state.json", "epi
 SHOW_MAX = 60                # messages she reads word for word ...
 SHOW_CHARS = 4500            # ... at most this many characters of them (the running summary keeps the rest)
 SESSION_GAP = 3600_000       # ms: an hour's silence ends a conversation
+# The hour-of-silence rule only ever looks backwards, and that is its blind spot: the longer the
+# silence, the surer it is that the conversation ended -- and the likelier that the first thing the
+# user says on coming back is an answer to its last message. Sealing it right then takes that
+# message out of her hands at the moment it starts to matter. (It happened: she lost a message of
+# her own nine seconds after referring to it.) So a finished conversation waits while the new one
+# is still finding its feet, and its last few messages stay readable for a while after it is sealed.
+SETTLE_MSGS, SETTLE_MS = 10, 15 * 60_000   # how much of a new conversation ends the grace period
+TAIL_KEPT = 8                # messages from before the cut that she still reads word for word
 ROLL_AFTER = 30              # unread messages of the conversation going on before its running summary is updated
 MOOD_BASE, MOOD_TAU = 0.55, 8 * 3600_000   # her usual mood, and how fast she returns to it (ms)
 # How each line's emotion moves her mood. Her tsundere banter (snapping back, sulking, getting
@@ -45,6 +63,30 @@ MOOD_BASE, MOOD_TAU = 0.55, 8 * 3600_000   # her usual mood, and how fast she re
 EMOTION_MOOD = {"laugh": 0.05, "happy": 0.04, "smile": 0.03, "smug": 0.02, "embarrassed": 0.02,
                 "puzzled": -0.005, "annoyed": -0.012, "pout": -0.012, "disgusted": -0.03,
                 "sad": -0.05, "angry": -0.05, "furious": -0.08}
+# How worked up each emotion is (0 calm .. 1 beside herself), apart from whether it felt good or
+# bad. This is what decides how well a conversation sticks: in people the amygdala's arousal, not
+# the importance of what was said, is what makes a memory last, so a silly fight outlives a
+# polite exchange about something that mattered. Her banter is discounted in EMOTION_MOOD above
+# because play isn't feeling -- but it is arousal, and it is exactly what she keeps.
+EMOTION_AROUSAL = {"neutral": 0.0, "thinking": 0.05, "smile": 0.15, "puzzled": 0.2, "smug": 0.3,
+                   "happy": 0.4, "pout": 0.4, "annoyed": 0.45, "sad": 0.6, "laugh": 0.6,
+                   "embarrassed": 0.6, "disgusted": 0.6, "surprised": 0.7, "angry": 0.75, "furious": 1.0}
+AROUSAL_BASE = 0.5           # what a memory counts as while nothing is known about how it felt
+# Arousal is measured against how expressive she is anyway, not on an absolute scale: she hits a
+# high note in almost every conversation, so a bare peak says nothing. These three are set so that
+# a typical conversation of hers lands on AROUSAL_BASE and the curve below leaves it fading exactly
+# as it did before; they were read off her own log (the median conversation peaks at 0.70, ends at
+# 0.32, and is charged in 35% of its lines). A different character, or a much changed persona
+# prompt, wants them measured again -- see felt_arousal.
+PEAK_FLOOR, PEAK_RANGE = 0.5, 0.4   # a peak below this is a calm conversation; this much above is a peak of 1
+HOT_FULL = 0.7               # charged in this share of her lines counts as charged throughout
+END_FULL = 0.65              # ending this worked up counts as a full-strength ending
+# How a memory felt, in words -- what is left of it once the details have gone. "neutral" has no
+# entry on purpose: a conversation she felt nothing at keeps nothing once it fades.
+FEELING_WORDS = {"laugh": "laughing", "happy": "happy", "smile": "warm", "smug": "pleased with yourself",
+                 "embarrassed": "flustered", "pout": "sulky", "annoyed": "annoyed", "angry": "angry",
+                 "furious": "furious", "sad": "sad", "disgusted": "put off", "surprised": "taken aback",
+                 "puzzled": "at a loss", "thinking": "thoughtful"}
 
 _lock = asyncio.Lock()
 _cache: dict = {"key": None, "log": []}
@@ -190,9 +232,19 @@ def migrate():
 
 # ---------------------------------------------------------------- working memory
 
-def working() -> list[dict]:
+def working(tail: int = 0) -> list[dict]:
+    """The messages she still has word for word: everything since the last consolidation, and with
+    `tail`, that many from just before it. What was consolidated lives in an episode now, but a
+    gist is not the message -- the last thing said before a cut is exactly what the user is likely
+    to come back to, so it stays readable for a while instead of turning into a summary mid-breath.
+    Only what she reads asks for a tail; consolidation itself must not, or it would do the same
+    messages twice."""
     upto = state()["consolidated"]
-    return [m for m in log() if m["id"] > upto]
+    entries = log()
+    live = [m for m in entries if m["id"] > upto]
+    if not tail:
+        return live
+    return [m for m in entries if m["id"] <= upto][-tail:] + live
 
 
 def unanswered(channel: str) -> int:
@@ -353,13 +405,68 @@ def transcript(entries: list[dict], meaning) -> str:
 # ---------------------------------------------------------------- recall and forgetting
 
 def strength(ep: dict, now: int | None = None) -> float:
-    """1 when fresh, 0.5 after one half-life. Important memories, and ones that keep coming
-    up again, have longer half-lives; the clock restarts from the last time one was recalled."""
+    """1 when fresh, 0.5 after one half-life. Important memories, ones that keep coming up again,
+    and ones she felt strongly at the time have longer half-lives; the clock restarts from the last
+    time one was recalled. Arousal is the emotional half of it (felt_arousal): calm at the time
+    (0) costs a memory 40% of its life, beside herself (1) buys it 40% more, and a memory with
+    nothing known about how it felt (AROUSAL_BASE) fades exactly as it always did."""
     now = now or now_ms()
     ref = max(ep.get("end", 0), ep.get("last_recalled") or 0)
     days = max(0.0, (now - ref) / 86400_000)
-    half = 5 * (1 + ep.get("recalls", 0)) * (0.4 + 1.6 * ep.get("importance", 0.5))
+    half = (5 * (1 + ep.get("recalls", 0)) * (0.4 + 1.6 * ep.get("importance", 0.5))
+            * (0.6 + 0.8 * ep.get("arousal", AROUSAL_BASE)))
     return math.exp(-days * math.log(2) / half)
+
+
+def felt_arousal(chunk: list[dict]) -> float:
+    """How worked up she got over a conversation, read off the emotion she tagged each line with
+    as she said it: no extra model call, and the same numbers her face and her voice used.
+
+    Peak and end, not the average (the peak-end rule): a person rates an episode by its strongest
+    moment and by how it finished, so an hour of small talk with one real moment in it is kept for
+    that moment. Three parts, each measured against her own baseline (PEAK_FLOOR and friends):
+    the peak (the strongest tenth of her lines, so one stray tag can't carry a conversation), how
+    charged it was throughout, and how it ended. The peak gets the least weight of the three for a
+    blunt reason -- she is a tsundere, and she peaks in nearly every conversation, so what actually
+    tells two conversations apart is how much of it she spent there and where it left her.
+    """
+    from . import persona
+    vals = []
+    for m in chunk:
+        if m.get("role") != "assistant":
+            continue
+        for line in (m.get("content") or "").splitlines():
+            # the two channels write a line differently: "emotion|ja|subtitle" on a call,
+            # "text|emotion|message" in the chat (and a sticker, which carries no tag)
+            parsed = persona.parse_chat_line(line) if m.get("ch") == "chat" else persona.parse_line(line)
+            if parsed and parsed.get("emotion"):
+                vals.append(EMOTION_AROUSAL.get(parsed["emotion"], 0.0))
+    if not vals:
+        return AROUSAL_BASE
+    top = max(2, round(len(vals) * 0.1))        # the peak: a tenth of it, never fewer than two lines
+    tail = max(3, round(len(vals) * 0.1))       # how it ended
+    peak = sum(sorted(vals)[-top:]) / min(top, len(vals))
+    end = sum(vals[-tail:]) / min(tail, len(vals))
+    hot = sum(1 for v in vals if v >= 0.45) / len(vals)   # how much of it was charged at all
+    clamp = lambda x: max(0.0, min(1.0, x))     # noqa: E731
+    return round(clamp(0.25 * clamp((peak - PEAK_FLOOR) / PEAK_RANGE)
+                       + 0.40 * clamp(hot / HOT_FULL)
+                       + 0.35 * clamp(end / END_FULL)), 3)
+
+
+def felt_words(ep: dict) -> str:
+    """How a memory felt, in words. This is the part that outlasts what was actually said."""
+    w = FEELING_WORDS.get(ep.get("feeling") or "neutral")
+    if not w:
+        return ""
+    a = ep.get("arousal", AROUSAL_BASE)
+    return ("faintly " if a < 0.25 else "" if a < 0.6 else "really ") + w
+
+
+def _opening(text: str) -> str:
+    """The first sentence of a gist: what is still there when the rest has blurred."""
+    parts = [x for x in re.split(r"(?<=[。！？!?.])\s*", text.strip()) if x]
+    return parts[0] if parts else text.strip()
 
 
 def _ep_tokens(ep: dict) -> set[str]:
@@ -644,6 +751,30 @@ def scrubbed(text: str) -> str:
     return "".join(keep)
 
 
+def due_to_sort(convs: list[list[dict]], now: int) -> tuple[list[list[dict]], list[dict] | None]:
+    """Which conversations are ready to become memories, and a conversation long enough to sort in
+    parts while it is still going. A conversation is over after an hour's silence (SESSION_GAP) --
+    but the one just before the live one also waits for the new one to find its feet, because the
+    first thing the user says on coming back is so often an answer to its last message."""
+    if not convs:
+        return [], None
+    live = convs[-1] if now - convs[-1][-1]["ts"] < SESSION_GAP else None
+    done = convs[:-1] if live else convs
+    if live and done and len(live) < SETTLE_MSGS and now - live[0]["ts"] < SETTLE_MS:
+        done = done[:-1]
+    return done, convs[-1] if len(convs[-1]) > 400 else None
+
+
+def ended_unanswered(chunk: list[dict]) -> bool:
+    """Whether a conversation ended on her speaking with no word back. Those are the messages she
+    would most have on her mind, and the ones a summary is most likely to drop as a loose end."""
+    for m in reversed(chunk):
+        if m.get("role") == "event":
+            continue
+        return m.get("role") == "assistant"
+    return False
+
+
 def _next_ep_id() -> int:
     return max((e["id"] for e in episodes()), default=0) + 1
 
@@ -677,9 +808,9 @@ def context(channel: str, query: str, meaning) -> tuple[str, list[dict]]:
     """(text for the system prompt, recent messages to send as real turns)."""
     from . import notes
     now = now_ms()
-    w = working()
-    earlier, recent = split(w, channel, now=now)
-    dt = datetime.now()
+    w = working()                                   # the live conversation, for everything below ...
+    earlier, recent = split(working(TAIL_KEPT), channel, now=now)   # ... but she still reads back
+    dt = datetime.now()                             # over the cut, so a sealed message isn't lost
     use_notes = notes.enabled()
     out = ["", "", "# Your memory"]
     core = notes.core_text() if use_notes else ""
@@ -719,15 +850,29 @@ def context(channel: str, query: str, meaning) -> tuple[str, list[dict]]:
         for ep, st in picks:
             stamp = f"{ago(ep['end'], now)} ({when(ep['end'])})"
             gist = scrubbed(ep.get("gist", "")) if use_notes else ep.get("gist", "")
-            out.append(f"- {stamp}: {ep['title']}. {gist}" if st >= 0.2 else
-                       f"- {stamp}: you only vaguely remember — {ep['title']}.")
+            # A memory doesn't go all at once: what was said blurs first and how it felt goes last,
+            # so one she has nearly lost still comes back as a feeling with a topic attached to it.
+            felt = felt_words(ep)
+            if st >= 0.5:                                   # clear: all of it
+                out.append(f"- {stamp}: {ep['title']}. {gist}")
+            elif st >= 0.2:                                 # going: the opening, and how it felt
+                rest = f" The rest is hazy, but you remember feeling {felt}." if felt else " The rest is hazy."
+                out.append(f"- {stamp}: {ep['title']}. {_opening(gist)}{rest}")
+            elif felt:                                      # nearly gone: the feeling, and no more
+                out.append(f"- {stamp}: you can't remember what was said, only that it was about "
+                           f"{ep['title']} — and that it left you {felt}.")
+            else:
+                out.append(f"- {stamp}: you only vaguely remember — {ep['title']}.")
         remembered(brought_up(query, [ep for ep, _ in picks]))
     if use_notes and (picked or picks):
         print("[recall]", " | ".join([f"#{p['id']} {p['_S']:.2f} (R{p['_R']:.2f} I{p['_I']:.2f} T{p['_T']:.2f}) {p['text'][:16]}"
                                       for p in picked] + [f"memory #{ep['id']} {ep['title'][:16]}" for ep, _ in picks]), flush=True)
     if core or known or picked or picks:
         out.append("Bring memories up the way a person does: only when they fit, without reciting them; a vague one "
-                   "stays vague (\"didn't you say something about...?\"). You don't remember anything that isn't here.")
+                   "stays vague (\"didn't you say something about...?\"). Where all that is left of one is how it "
+                   "felt, then that is what you have: say so, and don't invent the details back (\"I don't remember "
+                   "what we talked about that night, just that I was in a good mood after\"). You don't remember "
+                   "anything that isn't here.")
     # the newest part of working memory; anything older is waiting to be consolidated
     shown, chars = [], 0
     for m in reversed(earlier):
@@ -737,7 +882,8 @@ def context(channel: str, query: str, meaning) -> tuple[str, list[dict]]:
         shown.append(m)
     # a long conversation: what she no longer reads word for word, she remembers in outline
     roll = state().get("rolling")
-    if roll and (not shown or roll["from"] < shown[-1]["id"]):
+    live_shown = [m for m in shown if m["id"] > state()["consolidated"]]   # the tail isn't this conversation
+    if roll and (not live_shown or roll["from"] < live_shown[-1]["id"]):
         text = scrubbed(roll["text"]) if use_notes else roll["text"]
         out.append(f"\n# Earlier in this conversation (you remember it in outline)\n{text}")
     if shown:
@@ -768,8 +914,9 @@ CONSOLIDATE = """You are the long-term memory of Makise Kurisu (the AI built fro
 - title: a few words for what it was about, in {lang}.
 - gist: 1–3 sentences in {lang}, in Kurisu's own voice (first person), what happened and how she felt about it. Keep names, numbers, plans and promises; drop small talk.
 - facts: lasting things learned about the user (their life, likes, people, plans, promises made), one short sentence each in {lang}; [] if none. Nothing about Kurisu herself.
-- importance: 0.1 small talk ... 0.5 a real conversation ... 0.8 something personal, a promise, a first ... 1.0 unforgettable.
-- feeling: one of {emotions}.
+- importance: 0.1 small talk ... 0.5 a real conversation ... 0.8 something personal, a promise, a first ... 1.0 unforgettable. Judge it by the moment it mattered most and by how it ended, not by averaging the whole conversation: one real moment in an hour of nothing still makes it a 0.8.
+- feeling: one of {emotions}: how she was left feeling, at its strongest -- not the average of the conversation.
+- If the conversation ends with something Kurisu said that the user never answered, say so in the gist and say what it was. An unanswered message of her own is not small talk: it is the thing she would still have on her mind, and the thing she would bring up when they next speak.
 - keywords: 3–8 words someone might use to bring this up again (names, places, topics).
 Output the JSON only."""
 
@@ -778,8 +925,9 @@ CONSOLIDATE_NOTES = """You are the long-term memory of Makise Kurisu (the AI bui
   "notes": {{"add": [], "update": [], "retire": [], "confirm": []}}}}
 - title: a few words for what it was about, in {lang}.
 - gist: 1–3 sentences in {lang}, in Kurisu's own voice (first person): what happened and how she felt about it. Keep names, numbers, plans and promises; drop small talk.
-- importance: 0.1 small talk ... 0.5 a real conversation ... 0.8 something personal, a promise, a first ... 1.0 unforgettable.
-- feeling: one of {emotions}.
+- importance: 0.1 small talk ... 0.5 a real conversation ... 0.8 something personal, a promise, a first ... 1.0 unforgettable. Judge it by the moment it mattered most and by how it ended, not by averaging the whole conversation: one real moment in an hour of nothing still makes it a 0.8.
+- feeling: one of {emotions}: how she was left feeling, at its strongest -- not the average of the conversation.
+- If the conversation ends with something Kurisu said that the user never answered, say so in the gist and say what it was. An unanswered message of her own is not small talk: it is the thing she would still have on her mind, and the thing she would bring up when they next speak.
 - keywords: 3–8 words someone might use to bring this up again (names, places, topics).
 - notes: what this conversation changes in what Kurisu knows. Often little or nothing: empty lists are fine.
 - Anything listed under "Forgotten" stays out of the gist and keywords too.
@@ -806,7 +954,7 @@ MERGE = """You are the long-term memory of Makise Kurisu. Below are several of h
 - title: a few words for that {unit}, in {lang}.
 - gist: 2–4 sentences in {lang}, in Kurisu's own voice (first person): what mattered most, how things went with the user, anything promised or planned. Small talk goes.
 - importance: as much as the most important of them.
-- feeling: one of {emotions}. keywords: 3–8 words someone might use to bring it up again.
+- feeling: one of {emotions}: how that {unit} felt, taken from the memories that felt strongest -- not the average of them. keywords: 3–8 words someone might use to bring it up again.
 Output the JSON only."""
 
 FACTS_COMPACT = """Below is what Makise Kurisu knows about the user, oldest first. Rewrite it as at most {n} facts: merge duplicates and near-duplicates, keep the newer one when two disagree, drop trivia, keep names, dates, plans and promises. One short sentence each, in {lang}. Output a JSON array of strings only."""
@@ -892,6 +1040,22 @@ def _merge_facts(new: list[str], source: int):
     _write(FACTS, fs)
 
 
+def backfill_arousal() -> int:
+    """Memories made before she kept track of how worked up she got. Nothing is lost: every line
+    she ever said is still in the log with the emotion she said it with, so it can be read back."""
+    eps = episodes()
+    todo = [e for e in eps if e.get("arousal") is None and e.get("range")]
+    if not todo:
+        return 0
+    msgs = log()
+    for e in todo:
+        lo, hi = e["range"]
+        e["arousal"] = felt_arousal([m for m in msgs if lo <= m["id"] <= hi])
+    _write(EPISODES, eps)
+    print(f"[memory] how {len(todo)} older memories felt, read back off the log", flush=True)
+    return len(todo)
+
+
 async def maintain(summarize, language: str, rounds: int = 3) -> int:
     """Look after her memory after a reply: a few steps at most, each one request to the model.
     summarize(system, text) -> the model's reply. Runs in the background."""
@@ -899,6 +1063,7 @@ async def maintain(summarize, language: str, rounds: int = 3) -> int:
         return 0
     async with _lock:
         _start_notes()
+        backfill_arousal()
         done = 0
         while done < rounds:
             try:
@@ -977,8 +1142,7 @@ async def _step(summarize, language: str) -> bool:
     convs = sessions(working())
     if not convs:
         return False
-    done_convs = convs[:-1] if now - convs[-1][-1]["ts"] < SESSION_GAP else convs
-    long_open = convs[-1] if len(convs[-1]) > 400 else None
+    done_convs, long_open = due_to_sort(convs, now)
     if done_convs or long_open:
         chunk = done_convs[0] if done_convs else long_open[:300]
         roll = state().get("rolling")
@@ -986,6 +1150,8 @@ async def _step(summarize, language: str) -> bool:
         if roll and chunk[0]["id"] <= roll["from"] <= chunk[-1]["id"]:
             rest = [m for m in chunk if m["id"] > roll["upto"]]
             text = f"(Summary of how it started: {roll['text']})\n\n" + transcript(rest, meaning)
+        if ended_unanswered(chunk):
+            text += "\n\n(The user never answered that last message of yours.)"
         ep, ops = await consolidate(chunk, text)
         if not ep:
             if len(working()) < 600:
@@ -1060,13 +1226,20 @@ async def _step(summarize, language: str) -> bool:
 def _save_episode(ep: dict, chunk: list[dict], replace: int | None = None) -> int:
     all_eps = [e for e in episodes() if e["id"] != replace]
     eid = replace if replace is not None else _next_ep_id()
+    # How worked up she got is hers, not the model's: it is read off the tags she said the lines
+    # with. A conversation she felt strongly also counts for a little more than she rated it --
+    # gently (at most +0.13), because what mattered is still the model's call, not the volume.
+    arousal = felt_arousal(chunk)
+    importance = min(1.0, round(ep["importance"] + 0.3 * max(0.0, arousal - 0.55), 3))
     all_eps.append({"id": eid, "start": chunk[0]["ts"], "end": chunk[-1]["ts"], "range": [chunk[0]["id"], chunk[-1]["id"]],
                     "level": "session", "parts": 1, "recalls": 0, "last_recalled": None, "created": now_ms(),
-                    **{k: v for k, v in ep.items() if k != "facts"}})
+                    **{k: v for k, v in ep.items() if k != "facts"},
+                    "importance": importance, "arousal": arousal})
     all_eps.sort(key=lambda e: e["end"])
     _write(EPISODES, all_eps)
     _merge_facts(ep["facts"], eid)   # the old fact list (empty once she keeps notes)
-    print(f"[memory] remembered: {ep['title']} ({len(chunk)} messages, importance {ep['importance']:.1f})", flush=True)
+    print(f"[memory] remembered: {ep['title']} ({len(chunk)} messages, importance {importance:.1f}, "
+          f"felt {ep.get('feeling', 'neutral')} at {arousal:.2f})", flush=True)
     return eid
 
 
@@ -1148,7 +1321,9 @@ def _merge_episodes(level: str, members: list[dict], ep: dict):
               "recalls": sum(e.get("recalls", 0) for e in members),
               "last_recalled": max((e.get("last_recalled") or 0) for e in members) or None, "created": now_ms(),
               **{k: v for k, v in ep.items() if k != "facts"},
-              "importance": max([ep["importance"]] + [e.get("importance", 0.5) for e in members])}
+              "importance": max([ep["importance"]] + [e.get("importance", 0.5) for e in members]),
+              # the peak survives the merge: a week is remembered as worked up as its worst night
+              "arousal": max(e.get("arousal", AROUSAL_BASE) for e in members)}
     all_eps = [e for e in episodes() if e["id"] not in ids] + [merged]
     all_eps.sort(key=lambda e: e["end"])
     _write(EPISODES, all_eps)
@@ -1171,7 +1346,7 @@ def overview() -> dict:
     for e in episodes():
         eps.append({**{k: e.get(k) for k in ("id", "title", "gist", "start", "end", "importance", "feeling", "level",
                                                "parts", "recalls", "sealed", "sealed_at", "raw", "pending")},
-                    "strength": round(strength(e, now), 3)})
+                    "arousal": e.get("arousal"), "strength": round(strength(e, now), 3)})
     from . import notes
     return {
         "now": now, "mood": round(mood(now), 3), "mood_words": mood_words(mood(now)),

@@ -79,7 +79,12 @@ export class MemoryPanel {
       const row = this.item(e.raw ? t("mem.unsorted") : e.title, e.gist);
       const meta = el("small", "mem-meta");
       const clarity = e.pending ? t("mem.pending") : e.strength >= 0.6 ? t("mem.clear") : e.strength >= 0.2 ? t("mem.faded") : t("mem.deep");
-      meta.textContent = [stamp(e.end), clarity, e.recalls ? t("mem.recalled", e.recalls) : ""].filter(Boolean).join(" · ");
+      // how worked up she was at the time: it is what keeps the memory alive longest, and what is
+      // left of it once the details have gone, so it belongs next to how clearly she still has it
+      const word = e.feeling && e.feeling !== "neutral" ? t(`feel.${e.feeling}`) : "";
+      const felt = word && e.arousal != null
+        ? t("mem.felt", t(`feel.lvl${e.arousal < 0.25 ? 0 : e.arousal < 0.6 ? 1 : 2}`), word) : "";
+      meta.textContent = [stamp(e.end), clarity, felt, e.recalls ? t("mem.recalled", e.recalls) : ""].filter(Boolean).join(" · ");
       const s = el("div", "mem-strength");
       s.append(Object.assign(el("i"), { style: `width:${Math.round(e.strength * 100)}%` }));
       row.querySelector(".mem-text").append(meta, s);
