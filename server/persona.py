@@ -152,6 +152,12 @@ CALLING = """- Calling them: you can start a video call yourself, right now, ins
 # worth saying is that refusing is hers to choose and pretending she can't isn't.
 CALLING_ASKED = """- They have just asked you to video call them, and you can: it is your line to open. Say whatever you want to say first, then make `call|why` the last line and ring them. If you'd honestly rather not right now, say so in your own words and don't call -- but don't pretend you're unable to, and don't tell them to call you instead. You can do this.
 """
+# When the door is shut and calling is nonetheless what you are talking about. Said only then:
+# on an ordinary turn she is told nothing about calls, so there is nothing to reach for. The one
+# time she was told nothing while the subject was live, she answered "行，我按了。接好了。" --
+# and nothing rang. A feature she cannot use is a smaller problem than her saying she used it.
+CALLING_SHUT = """- You cannot start a video call this moment -- it is not open to you, whatever is being said about it. So never say you are calling, that you have dialled, that it is ringing, or that you pressed anything: say plainly that you can't right now, in your own words, however much that annoys you. Claiming you did it when you didn't is the one thing that isn't yours to do.
+"""
 CALLING_IDLE = """ You could also simply call them, instead of texting, if that is really what you want: `call|why` as your only line, and nothing after it. Only if the feeling is past what a text can carry -- otherwise text, as you always do."""
 CALLING_FMT = """- call|why you're calling, in a few words in {lang_name} and for yourself alone (they never see it) -- always the last line, nothing after it.
 """
@@ -246,15 +252,17 @@ def build_system_prompt(user_name: str, language: str = "en", context: str = "")
 
 
 def build_chat_prompt(user_name: str, language: str, stickers: str, context: str = "",
-                      may_call: bool = False, asked: bool = False) -> str:
+                      may_call: bool = False, asked: bool = False, shut: bool = False) -> str:
     """The text chat. stickers: her sticker set as listed for the model; context: as for the call.
     may_call: server/calling.py says ringing them is open to her this turn -- when it isn't, none
     of it reaches the prompt, so there is nothing there for her to reach for. asked: they asked
-    her to call, which is a different thing to say to her than being free to."""
+    her to call, which is a different thing to say to her than being free to. shut: calling is what
+    you are talking about and she still can't, the one case where she is told so."""
     language, f = _fields(user_name, language)
     return CHAT_PROMPT.format(**f, medium="a messaging app on their phone", stickers=stickers,
                               lang_style=LANGUAGES[language]["chat_style"], examples=CHAT_EXAMPLES[language],
-                              calling=(CALLING_ASKED if asked else CALLING) if may_call else "",
+                              calling=((CALLING_ASKED if asked else CALLING) if may_call
+                                       else CALLING_SHUT if shut else ""),
                               calling_fmt=CALLING_FMT.format(lang_name=f["lang_name"]) if may_call else "",
                               context=context)
 

@@ -410,8 +410,12 @@ async def text_chat(body: TextIn):
     else:   # with the time, so a long pause before it can be marked
         turn = [{"role": "user", "content": m, "ts": memory.now_ms()} for m in sent]
     messages = persona.chat_messages(recent + turn, sticker_meaning, since=memory.last_before(recent))
+    # when she can't and calling is nonetheless the subject, she is told so rather than left to
+    # invent it -- the one case where a shut door is mentioned at all (server/calling.py)
     system = persona.build_chat_prompt(settings.get("user_name", ""), language, stickers.prompt_list(),
-                                       context=mem, may_call=may_call, asked=asked)
+                                       context=mem, may_call=may_call, asked=asked,
+                                       shut=not may_call and not body.in_call
+                                            and calling.topic_live(recent + turn))
     lids = [memory.add("chat", "user", m)["id"] for m in sent]
 
     async def events():
@@ -471,6 +475,14 @@ async def text_chat(body: TextIn):
             yield sse("mood", {"feelings": memory.feel(feelings), "value": memory.mood()})
         elif idle and not dialled:   # she chose to stay quiet: that holds until one of you writes, rather than asking her again
             lull.decline()
+        # She decided to call and said so in prose instead of in the format -- a fast model drops
+        # a trailing-line rule long before it drops the decision. The door was already open, so
+        # this adds no way in; it only stops her meaning it and nothing happening.
+        if kept and not dialled and may_call:
+            said = calling.claimed_to_call("\n".join(kept))
+            if said:
+                dialled = [said]
+                print(f"[call] she said she was ringing them, in words: {said}", flush=True)
         if dialled:
             # the gate again, not her word for it: between the door opening and her reaching for it
             # another page may have got there first, or the budget may have gone

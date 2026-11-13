@@ -86,7 +86,43 @@ ASKED = re.compile(
     r"call me|give me a call|video ?call|ring me|"
     r"ビデオ通話|電話(?:して|かけて)", re.I)
 
+# Her saying it in words instead of reaching for `call|why`. Over three live tries she wrote the
+# format once: the trailing-line rule is the first thing a fast model drops, and what she wrote
+# instead was "我这边明明显示已经呼出了" -- she had decided to call and said so, and only the
+# syntax was missing. So where the door is already open her own line counts, which is the same
+# rule as ever (the rules open it, she decides) with her allowed to say it in her own words.
+# Never a way in: this is never read unless may_call() already said yes.
+CLAIMED = re.compile(
+    r"打过来|打过去|打给你|拨过去|拨出|呼出|接通了|我按了|挂过去|"
+    r"掛ける|かける|かけるわ|電話(?:する|をかけ)|"
+    r"calling you|ringing you|i'?m calling", re.I)
+# ... unless she is talking about some other time than now.
+LATER = re.compile(r"下次|下回|下一次|以后|回头|改天|今度|また今度|next time|later on", re.I)
+
+# Whether calling is what you are talking about at all. Only used to decide whether she is told
+# she cannot (below): when nothing in the conversation is about calling, she is told nothing,
+# and there is nothing there for her to reach for.
+TOPIC = re.compile(r"视频|电话|打过来|打给|拨|call|電話|ビデオ|通話", re.I)
+
 _pending: dict = {"reason": "", "lid": 0, "at": 0}   # she has dialled; why, for when you pick up
+
+
+def claimed_to_call(text: str) -> str:
+    """Her reply read as "I am calling you now", for when the door was open and she said it in
+    prose rather than in the format. Returns the line she said it in, or ""."""
+    for line in (text or "").split("\n"):
+        # text|emotion|said, voice|emotion|japanese|subtitle|file: everything past the tags that
+        # isn't the audio file, because a voice line is where she says it out loud
+        parts = [p for p in line.split("|")[2:] if not p.endswith(".wav")] or [line]
+        for body in parts:
+            if CLAIMED.search(body) and not LATER.search(body):
+                return body.strip()[:120]
+    return ""
+
+
+def topic_live(recent: list[dict], n: int = 8) -> bool:
+    """Whether calling has come up in the last few messages, either side of it."""
+    return any(TOPIC.search(m.get("content") or "") for m in recent[-n:] if m.get("role") != "event")
 
 
 def asked_to_call(text: str) -> bool:
