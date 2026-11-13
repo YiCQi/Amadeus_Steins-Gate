@@ -580,3 +580,8 @@ dialog#memory {
 /* a call of hers in the chat: hers, so on her side, and a missed one is marked */
 .call-record.missed { color: #e8697a; }
 .call-record.missed svg { stroke: currentColor; }
+
+/* the six she is made of (web/memory.js): the mood bar above is only a view of them */
+.mem-dim { display: flex; align-items: center; gap: 10px; padding: 3px 0; }
+.mem-dim-name { flex: none; width: 5.5em; font-size: 13px; color: var(--c-muted, #8a8a92); }
+.mem-dim .mem-bar { flex: 1; }

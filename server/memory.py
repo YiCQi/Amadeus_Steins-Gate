@@ -20,19 +20,23 @@
 - Episodes fade with time unless they come up again; each recall makes one last longer (the
   spacing effect). A faded one isn't gone: it is a deep memory, and a strong enough reminder
   brings it back. She is told only what this moment reminds her of, so the prompt stays small.
-- How she felt is part of how she remembers. How worked up she was over a conversation
-  (felt_arousal: the emotion she tagged her own lines with, at its peak and at the end) makes
-  the memory of it last longer, and counts for a little in how much it mattered. Fading then
-  takes the details first and the feeling last, so a memory she has nearly lost still comes
-  back as a feeling with a topic attached: "I don't remember what we said, only that it
-  left me in a good mood."
+- How she felt is part of how she remembers, in two halves. How worked up she was over a
+  conversation (felt_arousal: the emotion she tagged her own lines with, at its peak and at
+  the end) makes the memory of it last longer, and counts for a little in how much it
+  mattered. Which feelings they were (felt_feelings: the six, where the conversation left
+  her) is what is left once the details go, so a memory she has nearly lost still comes back
+  as a feeling with a topic attached -- and as more than one, since an evening is often funny
+  and sad at the same time and a single word had to pick.
 - Episodes and notes are both summaries. Behind them the messages themselves stay searchable
   (server/verbatim.py), so asking her about some small thing you once mentioned can bring the
   line back, and the summaries are free to stay general.
 - Forgetting is selective and reversible: a forgotten episode or fact is sealed, kept in the
   archive but out of her reach, until it is restored (verbatim.py honours that too).
-- Her mood (0..1) moves with how each reply felt to her and drifts back to her usual self
-  over hours.
+- How she feels is six things at once, not a point on one line: enjoyment, anger, sadness,
+  fluster, surprise, worry. Each rises with what she says and fades at its own speed -- a
+  flash of surprise in minutes, being flustered in half an hour, sadness over hours -- so she
+  can be amused and hurt in the same breath, which one number could not express. Her mood, the
+  single 0..1 still wanted for her face and the panel, is a view of the six.
 """
 import asyncio
 import json
@@ -59,20 +63,67 @@ SESSION_GAP = 3600_000       # ms: an hour's silence ends a conversation
 SETTLE_MSGS, SETTLE_MS = 10, 15 * 60_000   # how much of a new conversation ends the grace period
 TAIL_KEPT = 8                # messages from before the cut that she still reads word for word
 ROLL_AFTER = 30              # unread messages of the conversation going on before its running summary is updated
-MOOD_BASE, MOOD_TAU = 0.55, 8 * 3600_000   # her usual mood, and how fast she returns to it (ms)
-# How each line's emotion moves her mood. Her tsundere banter (snapping back, sulking, getting
-# flustered) is how she plays, not how she feels: weighed in full, a friendly evening of it sank
-# her to "in a bad mood", which then made her grumpier still.
-EMOTION_MOOD = {"laugh": 0.05, "happy": 0.04, "smile": 0.03, "smug": 0.02, "embarrassed": 0.02,
-                "puzzled": -0.005, "annoyed": -0.012, "pout": -0.012, "disgusted": -0.03,
-                "sad": -0.05, "angry": -0.05, "furious": -0.08}
+# How she feels, in six parts rather than one number. A single 0..1 mood put happy and sad at
+# opposite ends of one axis, so she could not be both, and "neither" and "both" came out as the
+# same 0.55. People are not like that: you can be amused and sad in the same minute, and being
+# flustered says nothing at all about whether you are enjoying yourself.
+#
+# These six are not Ekman's six, and measuring her own log is why. Over 1,237 of her tagged lines
+# there is no "fear" tag at all and "disgusted" is 0.7% (and that 0.7% is the look she gives a
+# pervert -- play, not revulsion), while her largest single emotion, "embarrassed" at 12.8%, has
+# no home among Ekman's basic six, being a self-conscious emotion rather than a basic one. Two
+# dead axes and nothing to hold what she actually does. So: disgust folded into anger, fear
+# replaced by worry (being worried about someone, which she is, rather than afraid, which she
+# never is), and fluster made an axis of its own, because for this character it is the main one.
+FEELINGS = ("enjoyment", "anger", "sadness", "fluster", "surprise", "worry")
+# What each one is made of, per line she says. A tag can feed more than one: sulking is a little
+# anger, a little hurt and a little fluster all at once, which is the whole point of having six.
+EMOTION_FEELING = {
+    "laugh": {"enjoyment": 1.0}, "happy": {"enjoyment": 0.85},
+    "smile": {"enjoyment": 0.5}, "smug": {"enjoyment": 0.45},
+    "embarrassed": {"fluster": 1.0, "enjoyment": 0.1},   # being teased by him is not unpleasant
+    "pout": {"anger": 0.3, "sadness": 0.15, "fluster": 0.25},
+    "annoyed": {"anger": 0.45}, "angry": {"anger": 0.8}, "furious": {"anger": 1.0},
+    "disgusted": {"anger": 0.5},
+    "sad": {"sadness": 1.0}, "worried": {"worry": 1.0, "sadness": 0.2},
+    "surprised": {"surprise": 1.0}, "puzzled": {"surprise": 0.4},
+    "thinking": {}, "neutral": {},
+}
+# How long each one stays with her (ms to fall to about a third). This is where "not opposites"
+# earns its keep: a flash of surprise is gone in minutes and she is over being flustered by the
+# time you have typed back, while sadness is still with her hours later. One number could only
+# ever have had one of these speeds, and had to use the slowest for everything.
+FEELING_TAU = {"surprise": 4 * 60_000, "fluster": 25 * 60_000, "enjoyment": 45 * 60_000,
+               "anger": 70 * 60_000, "sadness": 3 * 3600_000, "worry": 4 * 3600_000}
+RISE = 0.25                  # how far towards what she just showed one reply takes each of them
+# Where each one sits for her when nothing is the matter -- the median over her own log, replayed
+# through exactly the above. These are read against, not stored against: a feeling means something
+# at the distance it has travelled from her own normal, not at its face value, the same way
+# felt_arousal is measured against PEAK_FLOOR rather than against zero.
+#
+# They are also the finding itself, in one line each. Fluster sits at 0.50: being flustered IS her
+# resting state, one line in eight, and a system that called that an emotional event would be
+# wrong about her every evening. Sadness sits at 0.25 and reaches 0.96: she almost never says it,
+# and when she does she means it. That gap is what a single mood could not hold, because loud and
+# hurt had to share one axis -- and it is what now decides whether she picks up the phone.
+# Worry has no history yet (the tag is new): set just under sadness, since she will say it less.
+FEELING_BASE = {"enjoyment": 0.34, "anger": 0.33, "sadness": 0.25,
+                "fluster": 0.50, "surprise": 0.15, "worry": 0.10}
+# A different character, or a much changed persona prompt, wants these measured again: replay the
+# log through feel()'s arithmetic and take each one's median.
+SHOWS = 0.25                 # how far above her own normal a feeling has to be to be worth naming
+# Her mood, still a single number where one is wanted (her face's resting set, the panel, the
+# status line), is now a view of the six rather than a thing of its own. All six at rest is
+# MOOD_BASE, her usual self. Fluster counts a little *for* her: it is how she enjoys herself.
+MOOD_BASE = 0.55
+MOOD_VIEW = {"enjoyment": 0.45, "fluster": 0.05, "anger": -0.30, "sadness": -0.40, "worry": -0.15}
 # How worked up each emotion is (0 calm .. 1 beside herself), apart from whether it felt good or
 # bad. This is what decides how well a conversation sticks: in people the amygdala's arousal, not
 # the importance of what was said, is what makes a memory last, so a silly fight outlives a
-# polite exchange about something that mattered. Her banter is discounted in EMOTION_MOOD above
-# because play isn't feeling -- but it is arousal, and it is exactly what she keeps.
+# polite exchange about something that mattered. Her banter counts for little in FEELING_BASE
+# above, because play isn't feeling -- but it is arousal, and it is exactly what she keeps.
 EMOTION_AROUSAL = {"neutral": 0.0, "thinking": 0.05, "smile": 0.15, "puzzled": 0.2, "smug": 0.3,
-                   "happy": 0.4, "pout": 0.4, "annoyed": 0.45, "sad": 0.6, "laugh": 0.6,
+                   "happy": 0.4, "pout": 0.4, "annoyed": 0.45, "worried": 0.55, "sad": 0.6, "laugh": 0.6,
                    "embarrassed": 0.6, "disgusted": 0.6, "surprised": 0.7, "angry": 0.75, "furious": 1.0}
 AROUSAL_BASE = 0.5           # what a memory counts as while nothing is known about how it felt
 # Arousal is measured against how expressive she is anyway, not on an absolute scale: she hits a
@@ -88,7 +139,8 @@ END_FULL = 0.65              # ending this worked up counts as a full-strength e
 # entry on purpose: a conversation she felt nothing at keeps nothing once it fades.
 FEELING_WORDS = {"laugh": "laughing", "happy": "happy", "smile": "warm", "smug": "pleased with yourself",
                  "embarrassed": "flustered", "pout": "sulky", "annoyed": "annoyed", "angry": "angry",
-                 "furious": "furious", "sad": "sad", "disgusted": "put off", "surprised": "taken aback",
+                 "furious": "furious", "sad": "sad", "worried": "worried", "disgusted": "put off",
+                 "surprised": "taken aback",
                  "puzzled": "at a loss", "thinking": "thoughtful"}
 
 _lock = asyncio.Lock()
@@ -119,7 +171,13 @@ def state() -> dict:
     s = _read(STATE, {})
     s.setdefault("consolidated", 0)       # the log up to this id has become episodes
     s.setdefault("next_id", 1)
-    s.setdefault("mood", {"value": MOOD_BASE, "ts": now_ms()})
+    if "feelings" not in s:   # before the six: her one mood becomes what it was a view of
+        v = (s.get("mood") or {}).get("value", MOOD_BASE)
+        d = v - MOOD_BASE
+        s["feelings"] = {**{f: 0.0 for f in FEELINGS},
+                         "enjoyment": round(max(0.0, d) / MOOD_VIEW["enjoyment"], 3),
+                         "sadness": round(max(0.0, -d) / -MOOD_VIEW["sadness"], 3),
+                         "ts": (s.get("mood") or {}).get("ts", now_ms())}
     return s
 
 
@@ -474,9 +532,42 @@ def felt_arousal(chunk: list[dict]) -> float:
                        + 0.35 * clamp(end / END_FULL)), 3)
 
 
+def felt_feelings(chunk: list[dict]) -> dict:
+    """Where a conversation left her, in the six: her own machinery replayed over that
+    conversation alone, from nothing, at the real times. felt_arousal above keeps how strongly
+    she felt (which is what decides how long the memory lasts); this keeps *what* she felt, and
+    it can keep more than one at once -- an evening is often funny and sad, and the single
+    emotion tag an episode used to carry had to pick.
+
+    Where it ended rather than its peak, deliberately: the peak is already in arousal, and what
+    you are left with the next morning is how a night finished, not its loudest minute."""
+    from . import persona
+    v = {k: 0.0 for k in FEELINGS}
+    prev = None
+    for m in chunk:
+        if m.get("role") != "assistant":
+            continue
+        if prev is not None:
+            dt = max(0, m["ts"] - prev)
+            v = {k: round(x * math.exp(-dt / FEELING_TAU[k]), 3) for k, x in v.items()}
+        prev = m["ts"]
+        want = {k: 0.0 for k in FEELINGS}
+        for line in (m.get("content") or "").splitlines():
+            parsed = persona.parse_chat_line(line) if m.get("ch") == "chat" else persona.parse_line(line)
+            for k, w in EMOTION_FEELING.get((parsed or {}).get("emotion") or "", {}).items():
+                want[k] = max(want[k], w)
+        v = {k: round(min(1.0, v[k] + RISE * (want[k] - v[k])), 3) if want[k] > v[k] else v[k]
+             for k in FEELINGS}
+    return v
+
+
 def felt_words(ep: dict) -> str:
-    """How a memory felt, in words. This is the part that outlasts what was actually said."""
-    w = FEELING_WORDS.get(ep.get("feeling") or "neutral")
+    """How a memory felt, in words. This is the part that outlasts what was actually said, so
+    where the six are known it gets to say both halves of a mixed evening."""
+    both = feeling_words(ep["feelings"]) if ep.get("feelings") else ""
+    if both:
+        return both
+    w = FEELING_WORDS.get(ep.get("feeling") or "neutral")      # episodes from before the six
     if not w:
         return ""
     a = ep.get("arousal", AROUSAL_BASE)
@@ -801,20 +892,75 @@ def _next_ep_id() -> int:
 
 # ---------------------------------------------------------------- mood
 
-def mood(now: int | None = None) -> float:
+def feelings(now: int | None = None) -> dict:
+    """How she feels right now: each of the six, faded by how long it has been. They fade at
+    their own speeds, so what is left of an evening an hour later is not the evening scaled
+    down -- the fluster has gone and the worry has not."""
     now = now or now_ms()
-    m = state()["mood"]
-    return MOOD_BASE + (m["value"] - MOOD_BASE) * math.exp(-max(0, now - m["ts"]) / MOOD_TAU)
+    f = state()["feelings"]
+    dt = max(0, now - f.get("ts", now))
+    return {k: round(f.get(k, 0.0) * math.exp(-dt / FEELING_TAU[k]), 3) for k in FEELINGS}
 
 
-def feel(emotions: list[str], extra: float = 0.0) -> float:
-    """How a reply felt moves her mood a little (at most 0.1 a reply)."""
-    v = mood()
-    d = max(-0.1, min(0.1, sum(EMOTION_MOOD.get(e, 0) for e in emotions) + extra))
+def mood(now: int | None = None) -> float:
+    """The one number, for where one is wanted: a view of the six, not a thing of its own."""
+    f = feelings(now)
+    v = MOOD_BASE + sum(w * f[k] for k, w in MOOD_VIEW.items())
+    return round(max(0.0, min(1.0, v)), 3)
+
+
+def feel(emotions: list[str], extra: float = 0.0) -> dict:
+    """What she just said moves how she feels. Each of the six takes the strongest call on it in
+    this one reply rather than the sum: three flustered bubbles are one flustered moment, not
+    three. And each only ever rises here -- coming down is the business of time (feelings()),
+    which is why a snapped "変態！" is gone in half an hour and being sad is not."""
+    now = now_ms()
+    have = feelings(now)
+    want = {k: 0.0 for k in FEELINGS}
+    for e in emotions:
+        for k, w in EMOTION_FEELING.get(e, {}).items():
+            want[k] = max(want[k], w)
+    if extra:   # something that moved her beyond what she showed on her face
+        want["enjoyment" if extra > 0 else "sadness"] = max(want["enjoyment" if extra > 0 else "sadness"],
+                                                            min(1.0, abs(extra)))
+    out = {k: round(min(1.0, have[k] + RISE * (want[k] - have[k])) if want[k] > have[k] else have[k], 3)
+           for k in FEELINGS}
     s = state()
-    s["mood"] = {"value": round(max(0.0, min(1.0, v + d)), 3), "ts": now_ms()}
+    s["feelings"] = {**out, "ts": now}
+    s.pop("mood", None)
     _write(STATE, s)
-    return s["mood"]["value"]
+    return out
+
+
+def above(f: dict) -> dict:
+    """The six as they mean anything: how far each has travelled from where it sits for her when
+    nothing is the matter. Her fluster at 0.5 is Tuesday; her sadness at 0.5 is news."""
+    return {k: round(max(0.0, min(1.0, (f.get(k, 0.0) - FEELING_BASE[k]) / (1 - FEELING_BASE[k]))), 3)
+            for k in FEELINGS}
+
+
+def feeling_words(f: dict, floor: float = SHOWS) -> str:
+    """What she would say she is feeling, if asked and if honest: the ones actually raised above
+    her own normal, biggest first. Empty when none of them is -- which is most of the time, and
+    is itself worth saying rather than dressing up as a mood."""
+    up = sorted(((v, k) for k, v in above(f).items() if v >= floor), reverse=True)
+    if not up:
+        return ""
+    def word(v, k):
+        return FEELING_WORDS_OUT[k][0 if v < 0.5 else 1 if v < 0.75 else 2]
+    return ", ".join(word(v, k) for v, k in up[:3])
+
+
+# Three strengths each, because "a bit annoyed" and "furious" are the same axis and not the same
+# thing to be told about yourself. Written as she would own them, not as labels.
+FEELING_WORDS_OUT = {
+    "enjoyment": ("quietly enjoying this", "in a good mood", "really enjoying yourself"),
+    "anger":     ("a little annoyed", "cross", "angry"),
+    "sadness":   ("a bit down", "sad", "really hurting"),
+    "fluster":   ("slightly flustered", "flustered", "completely flustered"),
+    "surprise":  ("caught slightly off guard", "taken aback", "stunned"),
+    "worry":     ("faintly uneasy about them", "worried about them", "really worried about them"),
+}
 
 
 def mood_words(v: float) -> str:
@@ -843,8 +989,13 @@ def context(channel: str, query: str, meaning) -> tuple[str, list[dict]]:
         out.append(f"You last talked {ago(last['ts'], now)} (by {'text' if last['ch'] == 'chat' else 'video call'}).")
     else:
         out.append("You have never talked with the user before: this is your first conversation.")
-    v = mood(now)
-    out.append(f"Your mood right now: {v:.2f} on a 0–1 scale ({mood_words(v)}). Let it colour how you react; don't announce it.")
+    # Her own feelings, named rather than numbered: a number invites her to perform it, and
+    # several at once is the thing a single mood could never say.
+    felt = feeling_words(feelings(now))
+    out.append(f"How you feel right now, under whatever you decide to show: {felt}."
+               " Let it colour how you react; don't announce it or explain it." if felt else
+               "You feel level right now, nothing much either way. Let that be ordinary;"
+               " don't perform a mood you haven't got.")
 
     cue = " ".join([query] + [words(m, meaning) for m in w[-3:] if m["role"] != "event"]).strip()
     known = picked = []
@@ -1069,17 +1220,24 @@ def _merge_facts(new: list[str], source: int):
     _write(FACTS, fs)
 
 
-def backfill_arousal() -> int:
-    """Memories made before she kept track of how worked up she got. Nothing is lost: every line
-    she ever said is still in the log with the emotion she said it with, so it can be read back."""
+def backfill_felt() -> int:
+    """Memories made before she kept track of how a conversation felt -- how worked up she got,
+    and which of the six it left her in. Nothing is lost: every line she ever said is still in
+    the log with the emotion she said it with, so both can simply be read back off it. Worth
+    doing rather than leaving the old ones as they are, because the single emotion tag they
+    carried had to pick one, and picked wrong on every mixed evening."""
     eps = episodes()
-    todo = [e for e in eps if e.get("arousal") is None and e.get("range")]
+    todo = [e for e in eps if e.get("range") and (e.get("arousal") is None or e.get("feelings") is None)]
     if not todo:
         return 0
     msgs = log()
     for e in todo:
         lo, hi = e["range"]
-        e["arousal"] = felt_arousal([m for m in msgs if lo <= m["id"] <= hi])
+        chunk = [m for m in msgs if lo <= m["id"] <= hi]
+        if e.get("arousal") is None:
+            e["arousal"] = felt_arousal(chunk)
+        if e.get("feelings") is None:
+            e["feelings"] = felt_feelings(chunk)
     _write(EPISODES, eps)
     print(f"[memory] how {len(todo)} older memories felt, read back off the log", flush=True)
     return len(todo)
@@ -1092,7 +1250,7 @@ async def maintain(summarize, language: str, rounds: int = 3) -> int:
         return 0
     async with _lock:
         _start_notes()
-        backfill_arousal()
+        backfill_felt()
         from . import verbatim
         verbatim.index()          # the words themselves, searchable; a few hundred at a time
         done = 0
@@ -1265,7 +1423,8 @@ def _save_episode(ep: dict, chunk: list[dict], replace: int | None = None) -> in
     all_eps.append({"id": eid, "start": chunk[0]["ts"], "end": chunk[-1]["ts"], "range": [chunk[0]["id"], chunk[-1]["id"]],
                     "level": "session", "parts": 1, "recalls": 0, "last_recalled": None, "created": now_ms(),
                     **{k: v for k, v in ep.items() if k != "facts"},
-                    "importance": importance, "arousal": arousal})
+                    "importance": importance, "arousal": arousal,
+                    "feelings": felt_feelings(chunk)})
     all_eps.sort(key=lambda e: e["end"])
     _write(EPISODES, all_eps)
     _merge_facts(ep["facts"], eid)   # the old fact list (empty once she keeps notes)
@@ -1378,10 +1537,14 @@ def overview() -> dict:
     for e in episodes():
         eps.append({**{k: e.get(k) for k in ("id", "title", "gist", "start", "end", "importance", "feeling", "level",
                                                "parts", "recalls", "sealed", "sealed_at", "raw", "pending")},
-                    "arousal": e.get("arousal"), "strength": round(strength(e, now), 3)})
+                    "arousal": e.get("arousal"),
+                    # relative, since the panel only ever names them (see above())
+                    "feelings": above(e["feelings"]) if e.get("feelings") else None,
+                    "strength": round(strength(e, now), 3)})
     from . import notes
     return {
         "now": now, "mood": round(mood(now), 3), "mood_words": mood_words(mood(now)),
+        "feelings": feelings(now),
         "working": {"count": len([m for m in w if m["role"] != "event"]), "since": w[0]["ts"] if w else None},
         "notes": notes.overview() if notes.enabled() else None,
         "facts": [] if notes.enabled() else [{k: f.get(k) for k in ("id", "text", "ts", "sealed", "sealed_at")} for f in facts()],

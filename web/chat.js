@@ -37,10 +37,11 @@ async function* sseEvents(r) {
 
 export class Chat {
   // api(path, opts) -> Response, toast(msg, ms), settings() -> current settings,
-  // onCall(): start a video call, onSettings(), onMemory(), onFind(): open those, onMood(v): her mood changed;
-  // onIncoming({lid, ring}): she is calling, inCall(): a call is live right now (app.js)
-  constructor({ api, toast, settings, onCall, onSettings, onMemory, onFind, onMood, onIncoming, inCall }) {
-    Object.assign(this, { api, toast, settings, onCall, onMood, onIncoming, inCall });
+  // onCall(): start a video call, onSettings(), onMemory(), onFind(): open those;
+  // onIncoming({lid, ring}): she is calling, inCall(): a call is live right now (app.js);
+  // onFeel({feelings, value}): how she feels has moved (server/memory.py's six)
+  constructor({ api, toast, settings, onCall, onSettings, onMemory, onFind, onFeel, onIncoming, inCall }) {
+    Object.assign(this, { api, toast, settings, onCall, onFeel, onIncoming, inCall });
     this.list = $("#chat-list");
     this.input = $("#chat-input");
     this.status = $("#chat-status");
@@ -417,7 +418,7 @@ export class Chat {
           // already on screen, and the ring goes over them.
           this.onIncoming?.(data);
         } else if (event === "mood") {
-          this.onMood?.(data.value);
+          this.onFeel?.(data);
         } else if (event === "error") {
           throw new Error(data.message);
         }

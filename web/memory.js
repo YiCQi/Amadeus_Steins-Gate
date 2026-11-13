@@ -51,6 +51,7 @@ export class MemoryPanel {
     bar.append(Object.assign(el("i"), { style: `width:${Math.round(d.mood * 100)}%` }));
     mood.append(bar, el("span", "mem-num", d.mood.toFixed(2)));
     b.append(mood);
+    b.append(this.sixBars(d.feelings));
 
     // the conversation not yet sorted into memories
     const now = this.section(t("mem.now"));
@@ -84,9 +85,7 @@ export class MemoryPanel {
       const clarity = e.pending ? t("mem.pending") : e.strength >= 0.6 ? t("mem.clear") : e.strength >= 0.2 ? t("mem.faded") : t("mem.deep");
       // how worked up she was at the time: it is what keeps the memory alive longest, and what is
       // left of it once the details have gone, so it belongs next to how clearly she still has it
-      const word = e.feeling && e.feeling !== "neutral" ? t(`feel.${e.feeling}`) : "";
-      const felt = word && e.arousal != null
-        ? t("mem.felt", t(`feel.lvl${e.arousal < 0.25 ? 0 : e.arousal < 0.6 ? 1 : 2}`), word) : "";
+      const felt = feltWords(e);
       meta.textContent = [stamp(e.end), clarity, felt, e.recalls ? t("mem.recalled", e.recalls) : ""].filter(Boolean).join(" · ");
       const s = el("div", "mem-strength");
       s.append(Object.assign(el("i"), { style: `width:${Math.round(e.strength * 100)}%` }));
@@ -109,6 +108,24 @@ export class MemoryPanel {
         ss.append(row);
       }
     }
+  }
+
+  // The six she is actually made of (server/memory.py). The mood above is only a view of these,
+  // and the view is lossy on purpose: flustered-and-sad and feeling-nothing both come out near
+  // the middle of it, and only here can you see which one she is.
+  sixBars(f) {
+    const s = this.section(t("mem.feelings"));
+    if (!f) { s.append(el("p", "mem-empty", t("mem.nowNone"))); return s; }
+    const up = DIMS.filter(k => f[k] >= 0.08);
+    if (!up.length) { s.append(el("p", "mem-empty", t("dim.level"))); return s; }
+    for (const k of up.sort((a, b) => f[b] - f[a])) {
+      const row = el("div", "mem-dim");
+      const bar = el("div", "mem-bar");
+      bar.append(Object.assign(el("i"), { style: `width:${Math.round(f[k] * 100)}%` }));
+      row.append(el("span", "mem-dim-name", t(`dim.${k}`)), bar, el("span", "mem-num", f[k].toFixed(2)));
+      s.append(row);
+    }
+    return s;
   }
 
   // What she knows, folded: open it for the core by section, and the archive with a search box.
@@ -192,6 +209,24 @@ export class MemoryPanel {
   button(label, onclick) {
     return Object.assign(el("button", "mem-btn", label), { type: "button", onclick });
   }
+}
+
+const DIMS = ["enjoyment", "anger", "sadness", "fluster", "surprise", "worry"];
+const SHOWS = 0.25;   // server/memory.py's: this far above where a feeling sits for her anyway
+
+// How a memory felt, which is what outlasts what was said. Where the six are known it can say
+// two at once ("flustered and a bit down"), which is the half the single word always lost. An
+// episode's six arrive already measured against her own normal (server/memory.py's above()),
+// since half flustered is simply where she lives and naming that would say nothing.
+function feltWords(e) {
+  const up = DIMS.filter(k => (e.feelings?.[k] ?? 0) >= SHOWS).sort((a, b) => e.feelings[b] - e.feelings[a]);
+  if (up.length) {
+    return t("mem.felt", "", up.slice(0, 2).map(k =>
+      t(`feel.lvl${e.feelings[k] < 0.5 ? 0 : e.feelings[k] < 0.75 ? 1 : 2}`) + t(`dim.${k}`)).join(" · "));
+  }
+  const word = e.feeling && e.feeling !== "neutral" ? t(`feel.${e.feeling}`) : "";   // before the six
+  return word && e.arousal != null
+    ? t("mem.felt", t(`feel.lvl${e.arousal < 0.25 ? 0 : e.arousal < 0.6 ? 1 : 2}`), word) : "";
 }
 
 // "3 Nov 14:05" (with the year when it isn't this one)

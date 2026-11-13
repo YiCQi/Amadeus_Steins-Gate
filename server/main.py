@@ -227,7 +227,7 @@ async def chat(body: ChatIn):
         if kept:
             memory.add("call", "assistant", "\n".join(kept), **({"turn": body.turn} if body.turn else {}),
                        **({"idle": round(body.idle)} if idle else {}))
-            yield sse("mood", {"value": memory.feel(feelings)})
+            yield sse("mood", {"feelings": memory.feel(feelings), "value": memory.mood()})
         yield sse("done", {"timing": timing})
         if kept or not idle:
             remember_later(settings, language)
@@ -467,7 +467,7 @@ async def text_chat(body: TextIn):
         if kept:
             e = memory.add("chat", "assistant", "\n".join(kept), **({"idle": round(body.idle)} if idle else {}))
             yield sse("saved", {"lid": e["id"]})
-            yield sse("mood", {"value": memory.feel(feelings)})
+            yield sse("mood", {"feelings": memory.feel(feelings), "value": memory.mood()})
         elif idle and not dialled:   # she chose to stay quiet: that holds until one of you writes, rather than asking her again
             lull.decline()
         if dialled:
@@ -751,6 +751,7 @@ async def status():
         "llm_ready": bool(s.get("model")) and (bool(s.get("api_key")) or s.get("provider") == "openai"),
         "tts_enabled": tts.enabled,
         "mood": round(memory.mood(), 3),
+        "feelings": memory.feelings(),
         **(await tts.status() if tts.enabled else {"engine": None, "sovits_ready": False}),
     }
 

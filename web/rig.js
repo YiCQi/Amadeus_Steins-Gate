@@ -63,6 +63,10 @@ const POSES = {
   disgusted: { eyeOpen: 0.55, eyeAngry: 0.2, browAngle: -0.35, browY: -0.15, mouthForm: -0.5, mouthSkew: -0.55, angleY: 4, angleX: -3, angleZ: -3, gazeY: 0.1 },
   embarrassed: { cheek: 1, hatch: 1, eyeOpen: 0.8, gazeX: -0.35, gazeY: 0.55, angleY: -7, angleX: 8, angleZ: 3.5, browAngle: 0.55, mouthForm: -0.25, mouthWide: -0.35 },
   sad: { browAngle: 0.95, browY: -0.1, eyeOpen: 0.66, gazeY: 0.55, angleY: -8, angleZ: -2, mouthForm: -0.65 },
+  // worried is sad's brows on an open face looking straight at you: sadness turns away and down,
+  // worry holds your eye, because it is about you rather than about her
+  worried: { browAngle: 0.8, browY: 0.12, eyeOpen: 1.02, gazeY: 0.05, angleX: 3, angleZ: -3,
+             mouthForm: -0.4, mouthWide: -0.2, irisScale: 1.03 },
   surprised: { eyeOpen: 1.18, irisScale: 0.9, browY: 1, mouthBase: 0.4, angleY: 4.5, gazeY: -0.05 },
   puzzled: { angleZ: 9, angleX: 4, angleY: 1, browAsym: 0.9, browY: 0.15, eyeOpen: 1.04, eyeAsym: 0.6, mouthForm: -0.1, gazeY: -0.1 },
   thinking: { gazeX: 0.55, gazeY: -0.65, angleZ: -5, angleX: 7, angleY: 4, browAngle: -0.25, browY: 0.1, mouthForm: -0.15 },
@@ -75,9 +79,11 @@ if (typeof location !== "undefined" && new URLSearchParams(location.search).get(
   Object.assign(POSES.laugh, { eyeSmile: 0.9, eyeOpen: 0.45 });
 // how hard a new expression jolts the hair (default 0.4)
 const HAIR_KICK = { neutral: 0.2, listening: 0.15, sad: 0.25, thinking: 0.3, smile: 0.3, puzzled: 0.35, pout: 0.5,
-  surprised: 1, furious: 1, angry: 0.9, annoyed: 0.8, laugh: 0.8, happy: 0.7, embarrassed: 0.6 };
+  surprised: 1, furious: 1, angry: 0.9, annoyed: 0.8, laugh: 0.8, happy: 0.7, embarrassed: 0.6,
+  worried: 0.35 };
 // how long she goes between blinks, relative to usual: a glare or a shock holds the eyes open
-const BLINK_GAP = { surprised: 1.8, angry: 1.5, furious: 2.2, thinking: 1.3, sad: 0.8, puzzled: 1.2 };
+const BLINK_GAP = { surprised: 1.8, angry: 1.5, furious: 2.2, thinking: 1.3, sad: 0.8, puzzled: 1.2,
+  worried: 1.15 };
 
 class Motion {
   constructor() {
@@ -93,7 +99,9 @@ class Motion {
     this.energy = 0; this.energySlow = 0;
     // hair: left lock, bangs, right lock swing sideways; y bobs the tips
     this.hair = { L: { x: 0, v: 0 }, C: { x: 0, v: 0 }, R: { x: 0, v: 0 }, Y: { x: 0, v: 0 } };
-    this.mood = 0.55;              // her overall mood, 0..1 (server/memory.py); colours every expression
+    // how she feels, in six parts (server/memory.py): each 0..1 and independent of the others,
+    // so she can be flustered and sad at once. Colours every expression from underneath.
+    this.feelings = { enjoyment: 0, anger: 0, sadness: 0, fluster: 0, surprise: 0, worry: 0 };
     this.seed = Math.random() * 100;
   }
 
@@ -144,13 +152,19 @@ class Motion {
     const target = {};
     for (const [k, [rest]] of Object.entries(PARAMS)) target[k] = pose[k] ?? rest;
 
-    // her mood underneath whatever she's showing: in a good mood the corners of her mouth sit
-    // a little higher and her eyes soften; in a bad one it shows in her mouth and brows. Never in
-    // heavier lids: at rest those read as sleepy, not as cross.
-    const md = this.mood - 0.55;
-    target.mouthForm += 0.5 * md;
-    target.eyeSmile += 0.3 * Math.max(0, md - 0.05);
-    target.browAngle += 0.4 * Math.max(0, -md - 0.05);
+    // How she feels underneath whatever she's showing. Each of the six lands where it would on
+    // a real face, and they add: enjoyment lifts the mouth and softens the eyes, sadness and
+    // worry raise the inner brows, anger slants the lids. Never in heavier lids: at rest those
+    // read as sleepy, not as cross. The one that earns the six on its own is fluster -- a flush
+    // outlasts the line that caused it by a good while, and that lingering is most of what tells
+    // you she was embarrassed a minute ago rather than right now.
+    const f = this.feelings;
+    target.mouthForm += 0.5 * f.enjoyment - 0.45 * f.sadness - 0.35 * f.anger;
+    target.eyeSmile += 0.3 * f.enjoyment;
+    target.browAngle += 0.45 * f.sadness + 0.35 * f.worry;
+    target.eyeAngry += 0.3 * f.anger;
+    target.cheek += 0.5 * f.fluster;
+    target.eyeOpen += 0.06 * f.worry;
 
     // idle: slow head drift, so she never freezes
     target.angleX += 2.4 * Math.sin(0.29 * t + s) + 1.1 * Math.sin(0.83 * t + 2 * s);
@@ -890,8 +904,12 @@ export class RigAvatar {
     if (emotion !== this.motion.poseName) this.motion.setPose(emotion, performance.now() / 1000);
   }
 
-  // her overall mood, 0 (bad) .. 1 (great); it eases in through the pose springs
-  setMood(v) { if (Number.isFinite(v)) this.motion.mood = Math.min(1, Math.max(0, v)); }
+  // how she feels, six parts each 0..1 (server/memory.py); it eases in through the pose springs
+  setFeeling(f) {
+    if (!f) return;
+    for (const k of Object.keys(this.motion.feelings))
+      if (Number.isFinite(f[k])) this.motion.feelings[k] = Math.min(1, Math.max(0, f[k]));
+  }
 
   attach(analyser) {
     this.analyser = analyser;

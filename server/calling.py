@@ -17,20 +17,20 @@ moments -- "……不过。能听到你这么说，我……嗯。" -- score low
 
 That isn't a flaw in the measure. memory.py says it outright: her banter is play rather than
 feeling, but it is arousal, and arousal is what makes a memory stick. A silly fight really does
-outlive a polite exchange. It simply isn't what decides whether you pick up the phone. And no
-statistic over those tags can separate the two, because they carry the same tag: "embarrassed"
-is both "変態！" and a confession. (Weighting by mood instead doesn't help -- "angry" is her
-banter emotion as much as her angry one.) This is the same shape as the lesson in verbatim.py:
-the cheap number measures something real, and not the thing being asked about.
+outlive a polite exchange. It simply isn't what decides whether you pick up the phone. What one
+number could never do was keep the two apart, because loud and hurt were the same axis.
 
-So the model is the only part of this system that can tell her yelling from her meaning it, and
-that judgement is left to it entirely, in the prompt. What the rules keep is what rules are good
-at -- how often, and when it would be rude:
+Six axes can (memory.FEELINGS), and that is what this gate now asks. Fluster and temper are her
+fast axes, and her log puts her resting fluster at 0.50 -- half flustered is simply where she
+lives. Sadness rests at 0.25 and reaches 0.96. So the door asks how far she has travelled from
+her own normal (memory.above) on the slow axes only, and over her own log what opens it is
+sadness in 127 cases out of 140 and never once her yelling 変態. The rest is still the model's
+call, in the prompt, because no number knows whether this particular sadness is worth a phone
+call. What the rules keep is what rules are good at -- how often, and when it would be rude:
 
 - Nothing in the first few messages of a conversation (DEPTH). You cannot be past what text can
   carry on your second line; something has to have built up first.
-- Nothing out of a dead-flat stretch (CALM). This is arousal used as a floor, not as a gate: it
-  cannot tell feeling from flustering, but it can tell that nothing whatever has been going on.
+- Nothing unless a slow feeling is genuinely above where it sits for her anyway (MOVED).
 - At most PER_DAY of her calls, a cooldown since her last one and since any call at all (you
   have just hung up: don't ring back), and nothing out of the blue in the small hours.
 
@@ -49,12 +49,12 @@ from . import config, memory
 
 HOUR, DAY = 3600_000, 86400_000
 
-# A floor, not a gate (see above). Her replies run 0.47 at the median and 0.70 at the ninth
-# decile on memory.felt_arousal's scale; a fifth of them sit below 0.3, and those are the
-# stretches where nothing is happening at all -- "嗯", "好", neutral tag after neutral tag.
-CALM = 0.3
+# The slow feelings: the ones she doesn't reach for lightly. Anger, fluster and surprise are not
+# here at all, and that is the whole of the finding above -- those are the ones she is in all day.
+# They need no weights, because memory.above has already put each on its own scale.
+SLOW = ("sadness", "worry", "enjoyment")
+MOVED = 0.45                 # this far above her own normal; about one reply in four in her log
 DEPTH = 6                    # messages into the conversation before ringing makes any sense
-RECENT = 20                  # of them, at most, when reading how the conversation has been going
 LIVE = HOUR                  # older than this isn't the conversation she is in
 
 PER_DAY = 2                  # her own calls, in any 24 h
@@ -80,15 +80,16 @@ def _calls() -> list[dict]:
 
 
 def _live(now: int) -> list[dict]:
-    """The conversation she is in: what was said in the last hour, the newest RECENT of it."""
-    return [m for m in memory.log() if 0 <= now - m["ts"] < LIVE][-RECENT:]
+    """The conversation she is in: what was said in the last hour."""
+    return [m for m in memory.log() if 0 <= now - m["ts"] < LIVE]
 
 
-def heat(now: int) -> float:
-    """How worked up the conversation has been, on the scale a memory is kept by. Only ever
-    asked whether it is near zero -- it cannot tell her flustering from her meaning it."""
-    live = _live(now)
-    return memory.felt_arousal(live) if live else 0.0
+def moved(now: int | None = None) -> float:
+    """How far this conversation has actually moved her, on the slow axes only. She is reading
+    her state as of her last reply, so this opens a turn late by construction: you say the thing,
+    she answers it, and the phone rings after that -- which is also how it goes between people."""
+    f = memory.above(memory.feelings(now))
+    return round(max(f[k] for k in SLOW), 3)
 
 
 def may_call(state: str = "", now: int | None = None) -> bool:
@@ -112,7 +113,7 @@ def may_call(state: str = "", now: int | None = None) -> bool:
         return False
     if cold:
         return not QUIET_FROM <= datetime.fromtimestamp(now / 1000).hour < QUIET_TO
-    return len(_live(now)) >= DEPTH and heat(now) >= CALM
+    return len(_live(now)) >= DEPTH and moved(now) >= MOVED
 
 
 def dialled(reason: str) -> dict:

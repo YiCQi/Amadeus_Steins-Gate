@@ -13,14 +13,17 @@ Text chat, one bubble per line:      text|emotion|message
 import re
 
 EMOTIONS = ["neutral", "smile", "happy", "laugh", "smug", "annoyed", "angry", "furious",
-            "pout", "disgusted", "embarrassed", "sad", "surprised", "puzzled", "thinking"]
+            "pout", "disgusted", "embarrassed", "sad", "worried", "surprised", "puzzled", "thinking"]
 # what the model sometimes writes instead
 EMOTION_ALIASES = {"confused": "puzzled", "question": "puzzled", "questioning": "puzzled", "sulky": "pout",
                    "sulking": "pout", "mad": "angry", "rage": "furious", "laughing": "laugh", "shy": "embarrassed",
-                   "flustered": "embarrassed", "disgust": "disgusted", "smirk": "smug", "calm": "neutral"}
+                   "flustered": "embarrassed", "disgust": "disgusted", "smirk": "smug", "calm": "neutral",
+                   "worry": "worried", "worried about": "worried", "concerned": "worried", "anxious": "worried",
+                   "afraid": "worried", "scared": "worried", "fear": "worried"}
 EMOTION_GUIDE = ("neutral; smile < happy < laugh; smug (pleased with yourself, a smirk); "
                  "annoyed < angry < furious; pout (sulking, 闹别扭/郁闷); disgusted (the look you give a pervert); "
-                 "embarrassed (flustered); sad; surprised; puzzled (confused, \"huh?\"); thinking")
+                 "embarrassed (flustered); sad; worried (about them -- the face you make when "
+                 "something is wrong with him, not fear); surprised; puzzled (confused, \"huh?\"); thinking")
 
 EXAMPLES = {
     "en": """User: Are you the real Kurisu?

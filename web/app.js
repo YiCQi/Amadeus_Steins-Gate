@@ -326,7 +326,7 @@ async function converse({ message, event, idle, retract }) {
         } else if (ev === "hangup") {
           hangup = true;
         } else if (ev === "mood") {
-          avatar.setMood?.(data.value);
+          avatar.setFeeling?.(data.feelings);
         } else if (ev === "done") {
           Object.assign(timing, data.timing);
         } else if (ev === "error") {
@@ -637,7 +637,7 @@ const chat = new Chat({
   onSettings: () => { fillForm(); dlg.showModal(); },
   onMemory: () => memoryPanel.open(),
   onFind: () => search.open(),
-  onMood: v => avatar.setMood?.(v),
+  onFeel: d => avatar.setFeeling?.(d.feelings),
 });
 const search = new ChatSearch({ api, toast, jump: (params, bi) => chat.jump(params, bi) });
 window.amadeus.chat = chat;
@@ -816,7 +816,7 @@ $("#connect").onclick = async () => {
     "> Amadeus system online.",
   ]);
   $("#boot").classList.add("gone");
-  if (st.mood != null) avatar.setMood?.(st.mood);
+  avatar.setFeeling?.(st.feelings);
   avatar.show();
   setStatus(st.tts_enabled === undefined ? "offline" : "online");
   connected = true;

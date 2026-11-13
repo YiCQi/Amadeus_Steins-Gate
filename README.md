@@ -45,7 +45,7 @@ The app opens on a chat in the style of the Amadeus terminal. She texts the way 
 
 ### She remembers
 
-One memory for calls and chats, kept like a person's. What happened becomes dated memories that fade, and come back when something reminds her. What she learns about you becomes short notes: a few always on her mind, the rest recalled when they matter. She knows what time it is and how long you've been away. You can see all of it, undo any change, and make her forget.
+One memory for calls and chats, kept like a person's. What happened becomes dated memories that fade, and come back when something reminds her. What she learns about you becomes short notes: a few always on her mind, the rest recalled when they matter. How she feels is six things at once rather than a point between happy and sad, each fading at its own speed, so she can be amused and hurt in the same minute. She knows what time it is and how long you've been away. You can see all of it, undo any change, and make her forget.
 
 </td>
 </tr>
