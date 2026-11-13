@@ -33,6 +33,8 @@ server/
   persona.py              Kurisu system prompts (call, chat, when it goes quiet) + reply parsers
   stickers.py             her sticker set: web/assets/stickers/ + stickers.txt
   lull.py                 when the chat goes quiet: whether and when she texts first
+  calling.py              when she rings you herself, and how often she may
+  verbatim.py             the words themselves, searchable: a local index of every message
   news.py                 a few headlines she may bring up (config.toml [news])
   llm.py                  OpenAI-compatible & Anthropic streaming
   tts.py                  voices: GPT-SoVITS, Amadeus VITS, edge-tts (+ cache)

@@ -20,6 +20,7 @@ button, input, select { font: inherit; color: inherit; }
 
 /* ---------- phone frame ---------- */
 #phone {
+  position: relative;   /* an incoming call covers the phone, not the window */
   display: flex; flex-direction: column;
   height: 100dvh;
   width: min(100vw, calc((100dvh - 64px) * 834 / 1260));
@@ -536,3 +537,46 @@ dialog#memory {
 .mem-sealed .mem-text { color: var(--muted); }
 .mem-sealed .mem-btn { color: var(--data); }
 .mem-sealed .mem-btn:hover { border-color: var(--data); }
+
+/* ---------- she is calling (app.js, server/calling.py) ----------
+   Over everything, chat included: a call you can't see is a call you miss. */
+#incoming {
+  position: absolute; inset: 0; z-index: 40; display: grid; place-items: center;
+  background: radial-gradient(ellipse at 50% 30%, #2a0a12 0%, #06060899 60%, #000c 100%);
+  backdrop-filter: blur(6px); animation: ring-in .35s ease both;
+}
+#incoming[hidden] { display: none; }
+@keyframes ring-in { from { opacity: 0 } to { opacity: 1 } }
+
+.ring-card { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 0 24px; text-align: center; }
+#ring-face {
+  width: 108px; height: 108px; border-radius: 50%; object-fit: cover;
+  border: 1px solid var(--line, #d2283a66); box-shadow: 0 0 0 0 #d2283a66;
+  animation: ring-pulse 1.6s ease-out infinite;
+}
+/* the pulse is the ringing made visible: one ring per ring */
+@keyframes ring-pulse {
+  0% { box-shadow: 0 0 0 0 #d2283a66 }
+  70% { box-shadow: 0 0 0 22px #d2283a00 }
+  100% { box-shadow: 0 0 0 0 #d2283a00 }
+}
+.ring-card b { font-family: var(--serif); font-size: 22px; letter-spacing: .06em; color: #fff; }
+:root:lang(zh) .ring-card b { font-family: "Noto Sans SC", var(--sans); letter-spacing: .12em; }
+.ring-card small { font-family: var(--mono); font-size: 12px; letter-spacing: .1em; color: var(--data, #8a8a92); }
+.ring-btns { display: flex; gap: 56px; margin-top: 26px; }
+.ring-btn {
+  width: 60px; height: 60px; border-radius: 50%; border: 0; cursor: pointer;
+  display: grid; place-items: center; color: #fff;
+}
+.ring-btn svg { width: 26px; height: 26px; fill: currentColor; stroke: none; }
+.ring-btn.answer { background: #1f9d55; animation: ring-nudge 1.6s ease-in-out infinite; }
+.ring-btn.decline { background: #b4232f; }
+.ring-btn.decline svg { transform: rotate(134deg); }
+@keyframes ring-nudge { 0%, 70%, 100% { transform: none } 80% { transform: translateY(-5px) } 90% { transform: translateY(-2px) } }
+@media (prefers-reduced-motion: reduce) {
+  #ring-face, .ring-btn.answer { animation: none; }
+}
+
+/* a call of hers in the chat: hers, so on her side, and a missed one is marked */
+.call-record.missed { color: #e8697a; }
+.call-record.missed svg { stroke: currentColor; }

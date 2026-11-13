@@ -632,6 +632,8 @@ const chat = new Chat({
   api, toast,
   settings: () => settings,
   onCall: () => startCall(),
+  onIncoming: d => incoming(d),
+  inCall: () => connected,
   onSettings: () => { fillForm(); dlg.showModal(); },
   onMemory: () => memoryPanel.open(),
   onFind: () => search.open(),
@@ -646,6 +648,69 @@ function setMode(mode) {
 }
 
 $("#open-chat").onclick = () => setMode("chat");
+
+// ---------------------------------------------------------------- she is calling you
+// server/calling.py decides whether she may; she decides whether she does. Here it only has to
+// look like a phone: it rings over whatever is on screen, and it gives up on its own. However it
+// ends, the server is told, because that one entry is both her memory of it and the chat record.
+
+let ring = null;
+
+// A ringtone made rather than shipped: two notes, a pair of rings, then a pause -- nothing to
+// download, nothing anyone else owns, and it stops the moment the screen goes.
+function startRinging() {
+  initAudio();
+  audioCtx.resume().catch(() => {});
+  const beep = at => {
+    for (const [i, f] of [440, 523.25].entries()) {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = "sine";
+      o.frequency.value = f;
+      const t0 = at + i * 0.42;
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(0.09, t0 + 0.03);
+      g.gain.setValueAtTime(0.09, t0 + 0.26);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.36);
+      o.connect(g).connect(audioCtx.destination);
+      o.start(t0);
+      o.stop(t0 + 0.4);
+    }
+  };
+  const tick = () => beep(audioCtx.currentTime + 0.02);
+  tick();
+  return setInterval(tick, 2400);
+}
+
+function incoming({ lid, ring: seconds = 30 }) {
+  if (ring || connected) { answerCall(lid, "missed"); return; }   // already ringing, or you're on a call
+  const screen = $("#incoming");
+  $("#ring-face").src = "assets/kurisu/chat_avatar.webp";
+  screen.hidden = false;
+  ring = { lid, beat: startRinging(), give_up: setTimeout(() => answerCall(lid, "missed"), seconds * 1000) };
+}
+
+// how: "yes" (you picked up), "no" (you turned it down), "missed" (it rang out)
+async function answerCall(lid, how) {
+  if (!lid) return;
+  if (ring?.lid === lid) {
+    clearInterval(ring.beat);
+    clearTimeout(ring.give_up);
+    ring = null;
+    $("#incoming").hidden = true;
+  }
+  if (how === "yes") startCall();      // she opens it: she knows what she rang about
+  try {
+    const rec = await (await api("/api/call/incoming", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lid, answered: how }),
+    })).json();
+    if (how !== "yes" && chat.loaded) chat.live(rec);   // a missed call is a record, like any other
+  } catch (e) {
+    console.warn("[call] couldn't say how her call went:", e.message);
+  }
+}
+
+$("#ring-yes").onclick = () => answerCall(ring?.lid, "yes");
+$("#ring-no").onclick = () => answerCall(ring?.lid, "no");
 
 // ---------------------------------------------------------------- the call: from the chat, back to it
 

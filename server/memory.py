@@ -192,6 +192,18 @@ def revise(eid: int, content: str | None):
     _rewrite([{**m, "content": content} if m["id"] == eid else m for m in log() if not (m["id"] == eid and content is None)])
 
 
+def amend(eid: int, **fields) -> dict | None:
+    """Add to one entry of the log in place: how a call of hers went, once it is known."""
+    entries, out = log(), None
+    for i, m in enumerate(entries):
+        if m["id"] == eid:
+            entries[i] = out = {**m, **fields}
+            break
+    if out:
+        _rewrite(entries)
+    return out
+
+
 def _rewrite(entries: list[dict]):
     """The log is only ever appended to, except for these corrections: written whole, then swapped in."""
     tmp = LOG.with_suffix(".tmp")
@@ -376,10 +388,15 @@ def words(m: dict, meaning) -> str:
 
 def event_text(m: dict) -> str:
     if m.get("kind") == "call_start":
-        return "(the user started a video call)"
+        return "(the call you made began)" if m.get("by") == "kurisu" else "(the user started a video call)"
     if m.get("kind") == "call_end":
         who = "you hung up" if m.get("by") == "kurisu" else "the user hung up"
         return f"(the video call ended after {seconds_text(m.get('seconds'))}; {who})"
+    if m.get("kind") == "her_call":   # you rang them (server/calling.py), and how that went
+        why = f", because {m['reason']}" if m.get("reason") else ""
+        how = {"yes": "they picked up", "no": "they turned the call down",
+               "missed": "they never picked up"}.get(m.get("answered"), "")
+        return f"(you called them{why}{'; ' + how if how else ''})"
     return f"({m.get('kind', 'event')})"
 
 

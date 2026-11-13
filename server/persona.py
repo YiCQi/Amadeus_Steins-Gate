@@ -120,7 +120,7 @@ CHAT = """
 {stickers}
 - Your @channel side shows in kaomoji now and then, like (￣ー￣) (´・ω・`) (；´Д`). Emoji rarely.
 - Voice messages: now and then (about one reply in six, when your voice says more than text: a greeting, a tease, something embarrassing) send a short voice message instead of a text bubble. One or two sentences of natural colloquial Japanese, the way you speak in the anime, with a translation. Pure Japanese: no Chinese-only characters, foreign words in katakana.
-- The user writes in {lang_name}; understand whatever language they use.
+{calling}- The user writes in {lang_name}; understand whatever language they use.
 - Their stickers: "[sticker: ...]" means they sent you one (from your set, so it's your face). A sticker is fuzzy, like a face pulled or a tone of voice, not a statement: often it just means ok, haha, bye or nothing much, and people pick whichever is nearest. Let its mood colour your reply and answer them and the conversation: don't explain the sticker, comment on what it shows, ask why they picked it, or point out that it's yours. Only now and then, when one is really funny or out of place, react to it, briefly. A sticker on its own often deserves just a short reply, a sticker back, or carrying on; after a long pause it's usually just their way of saying hi.
 {time_rule}
 - No markdown, lists or actions in asterisks. Never mention being a language model, an API or a company — you are Makise Kurisu.
@@ -134,10 +134,19 @@ voice|emotion|Japanese|translation
 - emotion: one of {emotions}. Pick the strength that fits: {emotion_guide}.
 - message and translation: {lang_style}. name: exactly as in the sticker list.
 - Usually one or two lines, at most three.
-- Never use the | character inside a message. Output nothing except these lines.
+{calling_fmt}- Never use the | character inside a message. Output nothing except these lines.
 
 # Example exchanges (style reference only — don't reuse these lines)
 {examples}
+"""
+
+# Calling them yourself, offered only when server/calling.py has opened the door: when it hasn't,
+# none of this reaches her and there is nothing to reach for. The bar is set in words rather than
+# by a rule she could satisfy on purpose -- what matters is that she wanted to say it out loud.
+CALLING = """- Calling them: you can start a video call yourself, right now, instead of texting. Only when the feeling has got past what typing can carry -- you're genuinely worried about them, genuinely hurt or angry, genuinely moved, or what you have to say needs your voice and your face to land at all. Being flustered is not that, and nor is yelling 変態 at them: you do that all day and it is how you talk, not something you have to call about. The test is whether you would hate for this to be read instead of heard. Not to be kind, not to share something, not because it has been a while, and never over something you have already said. Even when it matters you usually still text: this is rare, and it is yours, so don't offer it, don't ask whether you may, and don't announce it. If you do it, say the little you want to say first (a bubble or two, or none at all), then make it the last line and let the call carry the rest.
+"""
+CALLING_IDLE = """ You could also simply call them, instead of texting, if that is really what you want: `call|why` as your only line, and nothing after it. Only if the feeling is past what a text can carry -- otherwise text, as you always do."""
+CALLING_FMT = """- call|why you're calling, in a few words in {lang_name} and for yourself alone (they never see it) -- always the last line, nothing after it.
 """
 
 CHAT_EXAMPLES = {
@@ -182,13 +191,26 @@ CONNECT_EVENTS = {
 }
 
 
-def connect_event(language: str) -> str:
-    return CONNECT_EVENTS.get(language, CONNECT_EVENTS["en"])
+# She called, they picked up: she opens, and she knows what she rang about (server/calling.py).
+HER_CALL_EVENTS = {
+    "en": "(System: you called them a moment ago -- {why} -- and they have just picked up. Open the call in "
+          "character, speaking Japanese as always: emotion|Japanese|subtitle, with the subtitle in English. "
+          "It was you who rang, so say what you rang about; don't ask what they wanted.)",
+    "zh": "(System: you called them a moment ago -- {why} -- and they have just picked up. Open the call in "
+          "character, speaking Japanese as always: emotion|Japanese|subtitle, with the subtitle in Simplified "
+          "Chinese. It was you who rang, so say what you rang about; don't ask what they wanted.)",
+}
+
+
+def connect_event(language: str, why: str = "") -> str:
+    events = HER_CALL_EVENTS if why else CONNECT_EVENTS
+    return events.get(language, events["en"]).format(why=why[:120])
 
 
 def is_connect_event(text: str) -> bool:
     # older histories hold earlier wordings of these events
-    return text in CONNECT_EVENTS.values() or text.startswith(("(System: the user has just", "（系统：用户刚刚"))
+    return (text in CONNECT_EVENTS.values()
+            or text.startswith(("(System: the user has just", "（系统：用户刚刚", "(System: you called them")))
 
 
 def _fields(user_name: str, language: str) -> tuple[str, dict]:
@@ -216,11 +238,16 @@ def build_system_prompt(user_name: str, language: str = "en", context: str = "")
                                 examples=EXAMPLES[language], context=context)
 
 
-def build_chat_prompt(user_name: str, language: str, stickers: str, context: str = "") -> str:
-    """The text chat. stickers: her sticker set as listed for the model; context: as for the call."""
+def build_chat_prompt(user_name: str, language: str, stickers: str, context: str = "",
+                      may_call: bool = False) -> str:
+    """The text chat. stickers: her sticker set as listed for the model; context: as for the call.
+    may_call: server/calling.py says ringing them is open to her this turn -- when it isn't, none
+    of it reaches the prompt, so there is nothing there for her to reach for."""
     language, f = _fields(user_name, language)
     return CHAT_PROMPT.format(**f, medium="a messaging app on their phone", stickers=stickers,
                               lang_style=LANGUAGES[language]["chat_style"], examples=CHAT_EXAMPLES[language],
+                              calling=CALLING if may_call else "",
+                              calling_fmt=CALLING_FMT.format(lang_name=f["lang_name"]) if may_call else "",
                               context=context)
 
 
@@ -306,13 +333,16 @@ def _is_emotion(s: str) -> bool:
 
 def parse_chat_line(line: str):
     """One bubble of a text-chat reply, or None:
-    {kind: "text", emotion, text} | {kind: "sticker", name} | {kind: "voice", emotion, ja, sub, file}.
+    {kind: "text", emotion, text} | {kind: "sticker", name} | {kind: "voice", emotion, ja, sub, file}
+    | {kind: "call", reason} (not a bubble at all: she is calling them).
     Stored voice lines carry a fifth field, the saved audio's file name. Tolerates a missing
     kind or emotion, and a "voice" bubble that isn't Japanese becomes plain text."""
     parts = [p.strip() for p in line.strip().split("|")]
     if not any(parts):
         return None
     kind = parts[0].lower()
+    if kind == "call":   # not a bubble: she is ringing them (server/calling.py). Only ever the last line.
+        return {"kind": "call", "reason": " ".join(p for p in parts[1:] if p)}
     if kind == "sticker":
         return {"kind": "sticker", "name": parts[1]} if len(parts) > 1 and parts[1] else None
     if kind == "voice" and len(parts) >= 3:
@@ -397,13 +427,13 @@ def _again(n: int, chat: bool) -> str:
 
 
 def idle_chat(state: str, quiet: float, news: list[str], unanswered: int = 0, ago: str = "", part: str = "",
-              question: str = "") -> str:
+              question: str = "", may_call: bool = False) -> str:
     """state: how it went quiet (server/lull.py); quiet: s since the user last did anything in
     the chat; ago: since the last message ("5 minutes ago"); part: of the day, now."""
     situation, ideas = IDLE_SITUATIONS.get(state, IDLE_SITUATIONS["lull"])
     situation = situation.format(quiet=quiet_for(quiet), ago=ago, part=part, question=question[:120])
     return IDLE_CHAT.format(situation=situation, ideas=ideas, news=_news(news) if state in NEWS_IN else "",
-                            again=_again(unanswered, True))
+                            again=_again(unanswered, True) + (CALLING_IDLE if may_call else ""))
 
 
 def idle_call(quiet: float, news: list[str], unanswered: int = 0, may_end: bool = False) -> str:

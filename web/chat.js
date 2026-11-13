@@ -37,9 +37,10 @@ async function* sseEvents(r) {
 
 export class Chat {
   // api(path, opts) -> Response, toast(msg, ms), settings() -> current settings,
-  // onCall(): start a video call, onSettings(), onMemory(), onFind(): open those, onMood(v): her mood changed
-  constructor({ api, toast, settings, onCall, onSettings, onMemory, onFind, onMood }) {
-    Object.assign(this, { api, toast, settings, onCall, onMood });
+  // onCall(): start a video call, onSettings(), onMemory(), onFind(): open those, onMood(v): her mood changed;
+  // onIncoming({lid, ring}): she is calling, inCall(): a call is live right now (app.js)
+  constructor({ api, toast, settings, onCall, onSettings, onMemory, onFind, onMood, onIncoming, inCall }) {
+    Object.assign(this, { api, toast, settings, onCall, onMood, onIncoming, inCall });
     this.list = $("#chat-list");
     this.input = $("#chat-input");
     this.status = $("#chat-status");
@@ -292,14 +293,16 @@ export class Chat {
     return li;
   }
 
-  // A finished video call, like a messaging app's call record: on your side, since you called.
+  // A video call's record, the way a messaging app keeps one: a finished call on your side,
+  // since you are the one who calls; one she made on hers, marked when you never picked it up.
   record(li, m) {
-    li.className = "msg me";
+    const hers = m.kind === "her_call" || m.rang === "kurisu";   // a call of hers, rung or finished
+    li.className = "msg " + (hers ? "her" : "me");
     const b = document.createElement("div");
-    b.className = "bubble call-record";
+    b.className = "bubble call-record" + (m.kind === "her_call" && m.answered !== "yes" ? " missed" : "");
     b.innerHTML = `<svg viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>`;
-    b.append(callText(m));
-    if (m.by === "kurisu" && m.seconds >= 2) b.append(Object.assign(document.createElement("small"), { textContent: t("callHerHung") }));
+    b.append(m.kind === "her_call" ? t(`herCall.${m.answered || "missed"}`) : callText(m));
+    if (m.kind !== "her_call" && m.by === "kurisu" && m.seconds >= 2) b.append(Object.assign(document.createElement("small"), { textContent: t("callHerHung") }));
     li.append(b);
     return li;
   }
@@ -393,7 +396,9 @@ export class Chat {
     if (idle) this.idleAbort = new AbortController();
     try {
       const r = await this.api("/api/text", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        // in_call: she won't ring you in the middle of a call you are already on
+        body: JSON.stringify({ ...payload, in_call: !!this.inCall?.() }),
         signal: idle ? this.idleAbort.signal : undefined,
       });
       for await (const { event, data } of sseEvents(r)) {
@@ -407,6 +412,10 @@ export class Chat {
           data.lids.forEach((lid, i) => { if (mine[i]) mine[i].dataset.lid = lid; });
         } else if (event === "saved") {
           for (const li of hers) if (li) li.dataset.lid = data.lid;
+        } else if (event === "call") {
+          // she didn't finish in text: she is ringing you (server/calling.py). Her bubbles are
+          // already on screen, and the ring goes over them.
+          this.onIncoming?.(data);
         } else if (event === "mood") {
           this.onMood?.(data.value);
         } else if (event === "error") {

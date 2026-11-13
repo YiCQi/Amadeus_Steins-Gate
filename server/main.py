@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, embed, kana, lull, memory, news, notes, persona, stickers
+from . import calling, config, embed, kana, lull, memory, news, notes, persona, stickers
 from .llm import LLMError, stream_chat
 from .stt import WhisperSTT
 from .tts import TTSError, Voice, speakable
@@ -117,8 +117,9 @@ async def chat(body: ChatIn):
             print(f"[call] went on talking after a pause: the first part is sent again with the rest ({n} log entries taken back)", flush=True)
         except OSError as e:   # the log briefly locked (an antivirus scan, say): the first part just stays in it
             print(f"[call] couldn't take back the first part of what they said ({e}); it stays in the log", flush=True)
+    rang = calling.why() if connect else ""   # "" unless this call is one she made
     if connect:
-        user_text = persona.connect_event(language)
+        user_text = persona.connect_event(language, rang)
     elif idle:   # not something the user said: a note that lets her speak up, or not
         n = memory.unanswered("call")
         user_text = persona.idle_call(body.idle, await idle_news(0.3), n, may_end=n >= 2 or body.idle >= 150)
@@ -132,7 +133,7 @@ async def chat(body: ChatIn):
     messages = persona.call_messages(recent + [said], since=memory.last_before(recent))
     system = persona.build_system_prompt(settings.get("user_name", ""), language, context=mem)
     if connect:
-        memory.add("call", "event", kind="call_start")
+        memory.add("call", "event", kind="call_start", **({"by": "kurisu"} if rang else {}))
     elif not idle:
         memory.add("call", "user", user_text, **({"turn": body.turn} if body.turn else {}))
 
@@ -282,10 +283,29 @@ class CallEndIn(BaseModel):
     by: str = "user"   # who hung up: "user" or "kurisu"
 
 
+class IncomingIn(BaseModel):
+    lid: int
+    answered: str = "missed"   # "yes" (picked up), "no" (turned down), "missed" (rang out)
+
+
+@app.post("/api/call/incoming")
+async def call_incoming(body: IncomingIn):
+    """How the call she made went. The call itself was recorded when she dialled; this writes the
+    end of it onto the same entry, so one call is one record, the way a phone shows it."""
+    e = calling.answered(body.lid, body.answered)
+    if not e:
+        raise HTTPException(404, "No such call")
+    return shown(e)[0]
+
+
 @app.post("/api/call/end")
 async def call_end(body: CallEndIn):
     """The call is over: it goes into her memory, and into the chat as a call record."""
-    e = memory.add("call", "event", kind="call_end", seconds=round(body.seconds), by="kurisu" if body.by == "kurisu" else "user")
+    started = next((m for m in reversed(memory.log())
+                    if m["role"] == "event" and m.get("kind") == "call_start"), None)
+    e = memory.add("call", "event", kind="call_end", seconds=round(body.seconds),
+                   by="kurisu" if body.by == "kurisu" else "user",
+                   **({"rang": "kurisu"} if started and started.get("by") == "kurisu" else {}))
     return shown(e)[0]
 
 
@@ -297,6 +317,7 @@ class TextIn(BaseModel):
     sticker: str | None = None          # the user sent one of her stickers (its id)
     event: str | None = None            # "idle": the user has been quiet a while, she may text first
     idle: float = 0                     # for how long (s)
+    in_call: bool = False               # a video call is live: she won't ring them in the middle of one
 
 
 def wav_seconds(audio: bytes) -> float | None:
@@ -375,26 +396,35 @@ async def text_chat(body: TextIn):
     # shows (a Dr Pepper one, say) would hand her memories about that and invite her to dwell on it.
     query = " ".join(m for m in sent if not persona.user_sticker(m))
     mem, recent = memory.context("chat", query, sticker_meaning)
+    # Whether ringing them is even an option this turn (server/calling.py). When it isn't, the
+    # prompt never mentions calling at all, so there is nothing for her to reach for.
+    may_call = not body.in_call and calling.may_call(plan["state"] if idle else "")
     if idle:   # not something the user said: a note that lets her text first, or not
         headlines = await idle_news(0.5) if plan["state"] in persona.NEWS_IN else []
         note = persona.idle_chat(plan["state"], body.idle, headlines, memory.unanswered("chat"),
                                  ago=memory.ago(plan["since"]) if plan.get("since") else "",
-                                 part=memory.part_of_day(datetime.now().hour), question=plan.get("question", ""))
+                                 part=memory.part_of_day(datetime.now().hour), question=plan.get("question", ""),
+                                 may_call=may_call)
         turn = [{"role": "user", "content": note}]
     else:   # with the time, so a long pause before it can be marked
         turn = [{"role": "user", "content": m, "ts": memory.now_ms()} for m in sent]
     messages = persona.chat_messages(recent + turn, sticker_meaning, since=memory.last_before(recent))
-    system = persona.build_chat_prompt(settings.get("user_name", ""), language, stickers.prompt_list(), context=mem)
+    system = persona.build_chat_prompt(settings.get("user_name", ""), language, stickers.prompt_list(),
+                                       context=mem, may_call=may_call)
     lids = [memory.add("chat", "user", m)["id"] for m in sent]
 
     async def events():
-        line, kept, feelings = "", [], []
+        line, kept, feelings, dialled = "", [], [], []
         if lids:   # where your messages are in the timeline, for the page's paging
             yield sse("sent", {"lids": lids})
 
         async def bubble(raw: str):
             b = persona.parse_chat_line(raw)
             if not b or (b["kind"] == "text" and persona.is_silence(b["text"])):
+                return None
+            if b["kind"] == "call":   # she is ringing them: not a bubble, and nothing comes after it
+                if may_call and not dialled:
+                    dialled.append(b["reason"])
                 return None
             if b["kind"] == "voice":
                 b["file"], secs = await record_voice(b["ja"], b["emotion"])
@@ -415,17 +445,17 @@ async def text_chat(body: TextIn):
             try:
                 async for chunk in chunks:
                     line += chunk
-                    while "\n" in line and len(kept) < CHAT_MAX:
+                    while "\n" in line and len(kept) < CHAT_MAX and not dialled:
                         done, line = line.split("\n", 1)
                         ev = await bubble(done)
                         if ev:
                             yield ev
-                    if len(kept) >= CHAT_MAX:   # enough said: the model is stopped, the rest neither shown nor paid for
+                    if len(kept) >= CHAT_MAX or dialled:   # enough said, or she has dialled: the model is stopped, the rest neither shown nor paid for
                         line = ""
                         break
             finally:
                 await chunks.aclose()
-            ev = await bubble(line) if len(kept) < CHAT_MAX else None
+            ev = await bubble(line) if len(kept) < CHAT_MAX and not dialled else None
             if ev:
                 yield ev
         except LLMError as e:
@@ -438,8 +468,17 @@ async def text_chat(body: TextIn):
             e = memory.add("chat", "assistant", "\n".join(kept), **({"idle": round(body.idle)} if idle else {}))
             yield sse("saved", {"lid": e["id"]})
             yield sse("mood", {"value": memory.feel(feelings)})
-        elif idle:   # she chose to stay quiet: that holds until one of you writes, rather than asking her again
+        elif idle and not dialled:   # she chose to stay quiet: that holds until one of you writes, rather than asking her again
             lull.decline()
+        if dialled:
+            # the gate again, not her word for it: between the door opening and her reaching for it
+            # another page may have got there first, or the budget may have gone
+            if calling.may_call(plan["state"] if idle else ""):
+                ev = calling.dialled(dialled[0])
+                print(f"[call] she is ringing them: {dialled[0]}", flush=True)
+                yield sse("call", {"lid": ev["id"], "ts": ev["ts"], "ring": calling.RING})
+            else:
+                print(f"[call] she went to ring them, but the moment had gone: {dialled[0]}", flush=True)
         yield sse("done", {})
         if kept or not idle:
             remember_later(settings, language)
@@ -460,7 +499,9 @@ async def text_chat(body: TextIn):
 def chat_entries() -> list[dict]:
     """What the chat shows, oldest first: its messages and the records of finished calls."""
     return [m for m in memory.log() if (m["ch"] == "chat" and m["role"] in ("user", "assistant"))
-            or (m["role"] == "event" and m.get("kind") == "call_end")]
+            or (m["role"] == "event" and (m.get("kind") == "call_end"
+                # one of hers you took is shown as the call that followed it, not twice
+                or (m.get("kind") == "her_call" and m.get("answered") != "yes")))]
 
 
 def shown(m: dict) -> list[dict]:
@@ -468,7 +509,10 @@ def shown(m: dict) -> list[dict]:
     lid: the entry's id, which the page pages and jumps by."""
     base = {"lid": m["id"], "ts": m.get("ts")}
     if m["role"] == "event":
-        return [{**base, "role": "event", "kind": "call", "seconds": m.get("seconds", 0), "by": m.get("by")}]
+        if m.get("kind") == "her_call":   # one she made: a missed call is a record too
+            return [{**base, "role": "event", "kind": "her_call", "answered": m.get("answered", "")}]
+        return [{**base, "role": "event", "kind": "call", "seconds": m.get("seconds", 0),
+                 "by": m.get("by"), "rang": m.get("rang", "")}]
     if m["role"] == "user":
         sid = persona.user_sticker(m["content"])
         s = stickers.find(sid) if sid else None
@@ -534,7 +578,7 @@ async def text_search(q: str = "", kind: str = "", date: str = "", limit: int = 
         if span and not span[0] <= m["ts"] < span[1]:
             continue
         for it in reversed(shown(m)):
-            if kind and it.get("kind") != kind:
+            if kind and it.get("kind") != kind and not (kind == "call" and it.get("kind") == "her_call"):
                 continue
             text = searchable(it)
             if words and not all(w in text.lower() for w in words):

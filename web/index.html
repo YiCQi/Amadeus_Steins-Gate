@@ -70,6 +70,23 @@
       </button>
     </form>
 
+    <!-- she is calling: over whatever is on screen, until you answer or it rings out (app.js) -->
+    <div id="incoming" hidden>
+      <div class="ring-card">
+        <img id="ring-face" alt="">
+        <b data-i18n="chatName">Makise Kurisu</b>
+        <small data-i18n="incoming">Incoming video call…</small>
+        <div class="ring-btns">
+          <button type="button" id="ring-no" class="ring-btn decline" data-i18n-title="decline" title="Decline" aria-label="Decline">
+            <svg viewBox="0 0 24 24"><path d="M3 14.6c5-4.4 13-4.4 18 0l-2.4 2.5a1 1 0 0 1-1.3.1l-2.2-1.6a1 1 0 0 1-.4-1l.3-1.6a10 10 0 0 0-6 0l.3 1.6a1 1 0 0 1-.4 1l-2.2 1.6a1 1 0 0 1-1.3-.1z"/></svg>
+          </button>
+          <button type="button" id="ring-yes" class="ring-btn answer" data-i18n-title="answer" title="Answer" aria-label="Answer">
+            <svg viewBox="0 0 24 24"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="M16 10l6-3.5v11L16 14z"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- text chat, messaging-app style (chat.js) -->
     <section id="chat" aria-label="Chat">
       <header class="chat-head">
@@ -177,6 +194,7 @@
         </label>
         <label class="check"><input name="show_japanese" type="checkbox"> <span data-i18n="set.showJa">Show Japanese line under subtitles</span></label>
         <label class="check"><input name="idle_talk" type="checkbox"> <span data-i18n="set.idleTalk">When it goes quiet, she may speak up first</span></label>
+        <label class="check"><input name="her_calls" type="checkbox"> <span data-i18n="set.herCalls">She may call you, when a text won't carry it</span></label>
       </fieldset>
 
       <p id="settings-msg" class="muted"></p>
