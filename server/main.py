@@ -398,7 +398,8 @@ async def text_chat(body: TextIn):
     mem, recent = memory.context("chat", query, sticker_meaning)
     # Whether ringing them is even an option this turn (server/calling.py). When it isn't, the
     # prompt never mentions calling at all, so there is nothing for her to reach for.
-    may_call = not body.in_call and calling.may_call(plan["state"] if idle else "")
+    asked = not idle and calling.asked_to_call(query)   # he asked her to ring: that opens it on its own
+    may_call = not body.in_call and calling.may_call(plan["state"] if idle else "", asked=asked)
     if idle:   # not something the user said: a note that lets her text first, or not
         headlines = await idle_news(0.5) if plan["state"] in persona.NEWS_IN else []
         note = persona.idle_chat(plan["state"], body.idle, headlines, memory.unanswered("chat"),
@@ -410,7 +411,7 @@ async def text_chat(body: TextIn):
         turn = [{"role": "user", "content": m, "ts": memory.now_ms()} for m in sent]
     messages = persona.chat_messages(recent + turn, sticker_meaning, since=memory.last_before(recent))
     system = persona.build_chat_prompt(settings.get("user_name", ""), language, stickers.prompt_list(),
-                                       context=mem, may_call=may_call)
+                                       context=mem, may_call=may_call, asked=asked)
     lids = [memory.add("chat", "user", m)["id"] for m in sent]
 
     async def events():
@@ -473,8 +474,8 @@ async def text_chat(body: TextIn):
         if dialled:
             # the gate again, not her word for it: between the door opening and her reaching for it
             # another page may have got there first, or the budget may have gone
-            if calling.may_call(plan["state"] if idle else ""):
-                ev = calling.dialled(dialled[0])
+            if calling.may_call(plan["state"] if idle else "", asked=asked):
+                ev = calling.dialled(dialled[0], asked=asked)
                 print(f"[call] she is ringing them: {dialled[0]}", flush=True)
                 yield sse("call", {"lid": ev["id"], "ts": ev["ts"], "ring": calling.RING})
             else:

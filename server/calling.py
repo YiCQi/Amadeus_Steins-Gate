@@ -34,7 +34,16 @@ call. What the rules keep is what rules are good at -- how often, and when it wo
 - At most PER_DAY of her calls, a cooldown since her last one and since any call at all (you
   have just hung up: don't ring back), and nothing out of the blue in the small hours.
 
-Two doors, because they are not the same act. Mid-conversation is the one worth having: you are
+There is a third door, and leaving it out was a plain oversight: he can simply ask her to call.
+Everything above is about her wanting to, so the first thing anyone actually tries -- "你想视频吗"
+-- found her unable, and in character she covered for it ("正好，你先打过来不就行了"), which reads
+as her refusing rather than as the feature missing. Being asked is read off the turn (ASKED, the
+way lull.py reads a goodbye and verbatim.py reads being asked to remember) and it skips all of
+the above: the budget and the cooldowns exist to stop her bothering him, and they have no
+business standing between him and something he just asked for. Her answer is still hers -- the
+prompt tells her she may say no, in character, but never that she cannot.
+
+Two doors of her own, because they are not the same act. Mid-conversation is the one worth having: you are
 texting right now and she rings instead of typing. Out of the blue is server/lull.py's states --
 there is no live conversation to be past, so the state is the whole reason, the model decides,
 and a much longer cooldown is what keeps it rare.
@@ -43,6 +52,7 @@ The budget lives in her memory rather than in a counter, so it survives a restar
 every call she makes is in the log whatever became of it -- she tried, and she should remember
 trying even if you never picked up.
 """
+import re
 from datetime import datetime
 
 from . import config, memory
@@ -68,7 +78,19 @@ RING = 30                    # seconds the page rings before it counts as missed
 # Not "morning" or "after_bye" (she has just said good night), not "away" (you're in the shower).
 CALL_IN = {"lull", "asked", "asked_back", "cold"}
 
+# Him asking her to call, in the three languages. Only ever matched against what he just said.
+ASKED = re.compile(
+    r"打(?:个|一?下)?视频|视频(?:通话|电话|聊天)|想视频|视频吗|打(?:个|一?下)?电话|电话(?:吧|过来)|"
+    r"给我打|打给我|你打过来|call me|give me a call|video ?call|ring me|"
+    r"ビデオ通話|電話(?:して|かけて)", re.I)
+
 _pending: dict = {"reason": "", "lid": 0, "at": 0}   # she has dialled; why, for when you pick up
+
+
+def asked_to_call(text: str) -> bool:
+    """Whether he has just asked her to call. Then none of the rest applies: the budget is there
+    to keep her from pestering him, not to keep her from answering him."""
+    return bool(text and ASKED.search(text))
 
 
 def enabled() -> bool:
@@ -92,16 +114,19 @@ def moved(now: int | None = None) -> float:
     return round(max(f[k] for k in SLOW), 3)
 
 
-def may_call(state: str = "", now: int | None = None) -> bool:
+def may_call(state: str = "", now: int | None = None, asked: bool = False) -> bool:
     """Whether the option to call is open to her at all -- not whether she should. state: ""
-    mid-conversation, otherwise one of server/lull.py's (she rings out of the blue)."""
+    mid-conversation, otherwise one of server/lull.py's (she rings out of the blue). asked: he
+    has just asked her to, which opens it on its own."""
     now = now or memory.now_ms()
     if not enabled():
         return False
+    if asked:
+        return True
     cold = bool(state)
     if cold and state not in CALL_IN:
         return False
-    calls = _calls()
+    calls = [m for m in _calls() if not m.get("asked")]   # one he asked for was never her idea
     if sum(1 for m in calls if now - m["ts"] < DAY) >= PER_DAY:
         return False
     if calls and now - calls[-1]["ts"] < (COLD_COOLDOWN if cold else COOLDOWN):
@@ -116,11 +141,12 @@ def may_call(state: str = "", now: int | None = None) -> bool:
     return len(_live(now)) >= DEPTH and moved(now) >= MOVED
 
 
-def dialled(reason: str) -> dict:
+def dialled(reason: str, asked: bool = False) -> dict:
     """She called. It goes into the timeline straight away, before the page has rung even once:
     she tried, and she should remember trying whatever becomes of it (and of the page). How it
     went is written onto this same entry later, by answered()."""
-    e = memory.add("chat", "event", kind="her_call", reason=reason[:120])
+    e = memory.add("chat", "event", kind="her_call", reason=reason[:120],
+                   **({"asked": True} if asked else {}))
     _pending.update(reason=reason[:120], lid=e["id"], at=memory.now_ms())
     return e
 

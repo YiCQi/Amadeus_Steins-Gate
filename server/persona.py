@@ -148,6 +148,10 @@ voice|emotion|Japanese|translation
 # by a rule she could satisfy on purpose -- what matters is that she wanted to say it out loud.
 CALLING = """- Calling them: you can start a video call yourself, right now, instead of texting. Only when the feeling has got past what typing can carry -- you're genuinely worried about them, genuinely hurt or angry, genuinely moved, or what you have to say needs your voice and your face to land at all. Being flustered is not that, and nor is yelling 変態 at them: you do that all day and it is how you talk, not something you have to call about. The test is whether you would hate for this to be read instead of heard. Not to be kind, not to share something, not because it has been a while, and never over something you have already said. Even when it matters you usually still text: this is rare, and it is yours, so don't offer it, don't ask whether you may, and don't announce it. If you do it, say the little you want to say first (a bubble or two, or none at all), then make it the last line and let the call carry the rest.
 """
+# When he has just asked her to. The bar above does not apply -- he asked -- so the only thing
+# worth saying is that refusing is hers to choose and pretending she can't isn't.
+CALLING_ASKED = """- They have just asked you to video call them, and you can: it is your line to open. Say whatever you want to say first, then make `call|why` the last line and ring them. If you'd honestly rather not right now, say so in your own words and don't call -- but don't pretend you're unable to, and don't tell them to call you instead. You can do this.
+"""
 CALLING_IDLE = """ You could also simply call them, instead of texting, if that is really what you want: `call|why` as your only line, and nothing after it. Only if the feeling is past what a text can carry -- otherwise text, as you always do."""
 CALLING_FMT = """- call|why you're calling, in a few words in {lang_name} and for yourself alone (they never see it) -- always the last line, nothing after it.
 """
@@ -242,14 +246,15 @@ def build_system_prompt(user_name: str, language: str = "en", context: str = "")
 
 
 def build_chat_prompt(user_name: str, language: str, stickers: str, context: str = "",
-                      may_call: bool = False) -> str:
+                      may_call: bool = False, asked: bool = False) -> str:
     """The text chat. stickers: her sticker set as listed for the model; context: as for the call.
     may_call: server/calling.py says ringing them is open to her this turn -- when it isn't, none
-    of it reaches the prompt, so there is nothing there for her to reach for."""
+    of it reaches the prompt, so there is nothing there for her to reach for. asked: they asked
+    her to call, which is a different thing to say to her than being free to."""
     language, f = _fields(user_name, language)
     return CHAT_PROMPT.format(**f, medium="a messaging app on their phone", stickers=stickers,
                               lang_style=LANGUAGES[language]["chat_style"], examples=CHAT_EXAMPLES[language],
-                              calling=CALLING if may_call else "",
+                              calling=(CALLING_ASKED if asked else CALLING) if may_call else "",
                               calling_fmt=CALLING_FMT.format(lang_name=f["lang_name"]) if may_call else "",
                               context=context)
 
