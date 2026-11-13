@@ -75,6 +75,9 @@ export class MemoryPanel {
     const eps = d.episodes.filter(e => !e.sealed).reverse();
     const es = this.section(t("mem.episodes"));
     if (!eps.length) es.append(el("p", "mem-empty", t("mem.episodesNone")));
+    // the words themselves stay searchable behind the memories, so say so: the memories are
+    // summaries, and without this line it would look as though the detail in them is all there is
+    if (d.verbatim?.indexed) es.append(el("p", "mem-empty", t("mem.verbatim", d.verbatim.indexed)));
     for (const e of eps) {
       const row = this.item(e.raw ? t("mem.unsorted") : e.title, e.gist);
       const meta = el("small", "mem-meta");

@@ -26,8 +26,11 @@
   takes the details first and the feeling last, so a memory she has nearly lost still comes
   back as a feeling with a topic attached: "I don't remember what we said, only that it
   left me in a good mood."
+- Episodes and notes are both summaries. Behind them the messages themselves stay searchable
+  (server/verbatim.py), so asking her about some small thing you once mentioned can bring the
+  line back, and the summaries are free to stay general.
 - Forgetting is selective and reversible: a forgotten episode or fact is sealed, kept in the
-  archive but out of her reach, until it is restored.
+  archive but out of her reach, until it is restored (verbatim.py honours that too).
 - Her mood (0..1) moves with how each reply felt to her and drifts back to her usual self
   over hours.
 """
@@ -864,10 +867,19 @@ def context(channel: str, query: str, meaning) -> tuple[str, list[dict]]:
             else:
                 out.append(f"- {stamp}: you only vaguely remember — {ep['title']}.")
         remembered(brought_up(query, [ep for ep, _ in picks]))
-    if use_notes and (picked or picks):
+
+    # ... and the words themselves, when the question is specific enough to ask for them. Her notes
+    # and her memories are both summaries; this is the one layer that is not (server/verbatim.py).
+    # Only what she isn't already reading: a message in front of her is not something coming back.
+    from . import verbatim
+    said_again = verbatim.recall(query, now, skip={m["id"] for m in working(TAIL_KEPT)[-SHOW_MAX:]})
+    if said_again:
+        out.append(verbatim.recall_text(said_again, now))
+    if use_notes and (picked or picks or said_again):
         print("[recall]", " | ".join([f"#{p['id']} {p['_S']:.2f} (R{p['_R']:.2f} I{p['_I']:.2f} T{p['_T']:.2f}) {p['text'][:16]}"
-                                      for p in picked] + [f"memory #{ep['id']} {ep['title'][:16]}" for ep, _ in picks]), flush=True)
-    if core or known or picked or picks:
+                                      for p in picked] + [f"memory #{ep['id']} {ep['title'][:16]}" for ep, _ in picks]
+                                     + [f"said #{p['id']} {p['score']:.2f} {p['text'][:16]}" for p in said_again]), flush=True)
+    if core or known or picked or picks or said_again:
         out.append("Bring memories up the way a person does: only when they fit, without reciting them; a vague one "
                    "stays vague (\"didn't you say something about...?\"). Where all that is left of one is how it "
                    "felt, then that is what you have: say so, and don't invent the details back (\"I don't remember "
@@ -1064,6 +1076,8 @@ async def maintain(summarize, language: str, rounds: int = 3) -> int:
     async with _lock:
         _start_notes()
         backfill_arousal()
+        from . import verbatim
+        verbatim.index()          # the words themselves, searchable; a few hundred at a time
         done = 0
         while done < rounds:
             try:
@@ -1340,6 +1354,7 @@ def _merge_episodes(level: str, members: list[dict], ep: dict):
 # ---------------------------------------------------------------- for the memory panel
 
 def overview() -> dict:
+    from . import verbatim
     now = now_ms()
     w = working()
     eps = []
@@ -1354,5 +1369,6 @@ def overview() -> dict:
         "notes": notes.overview() if notes.enabled() else None,
         "facts": [] if notes.enabled() else [{k: f.get(k) for k in ("id", "text", "ts", "sealed", "sealed_at")} for f in facts()],
         "episodes": eps,
+        "verbatim": verbatim.overview(),
         "total": len(log()),
     }
