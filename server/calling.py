@@ -80,8 +80,10 @@ CALL_IN = {"lull", "asked", "asked_back", "cold"}
 
 # Him asking her to call, in the three languages. Only ever matched against what he just said.
 ASKED = re.compile(
-    r"打(?:个|一?下)?视频|视频(?:通话|电话|聊天)|想视频|视频吗|打(?:个|一?下)?电话|电话(?:吧|过来)|"
-    r"给我打|打给我|你打过来|call me|give me a call|video ?call|ring me|"
+    r"打(?:个|一?下)?视频|视频(?:通话|电话|聊天)|想视频|视频吗|(?:跟|和|给)我视频|"
+    r"开(?:个|一?下)?视频|来(?:个|一?下)?视频|"
+    r"打(?:个|一?下)?电话|电话(?:吧|过来)|给我打|打给我|(?<![我咱])打过来|"
+    r"call me|give me a call|video ?call|ring me|"
     r"ビデオ通話|電話(?:して|かけて)", re.I)
 
 _pending: dict = {"reason": "", "lid": 0, "at": 0}   # she has dialled; why, for when you pick up
