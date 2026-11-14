@@ -483,6 +483,16 @@ async def text_chat(body: TextIn):
             if said:
                 dialled = [said]
                 print(f"[call] she said she was ringing them, in words: {said}", flush=True)
+        # He asked for it out loud, so the call is the default and her no is what stops it: she
+        # has a whole sentence to turn him down in, and no trailing tag to lose (server/calling.py)
+        if kept and not dialled and may_call and asked:
+            body_text = "\n".join(kept)
+            if calling.refused_to_call(body_text):
+                print("[call] he asked and she turned him down, in words", flush=True)
+            else:
+                said = [p for p in kept[-1].split("|")[2:] if not p.endswith(".wav")]
+                dialled = [(said[-1] if said else query).strip()[:120]]
+                print("[call] he asked, she didn't say no: ringing them", flush=True)
         if dialled:
             # the gate again, not her word for it: between the door opening and her reaching for it
             # another page may have got there first, or the budget may have gone

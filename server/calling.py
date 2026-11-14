@@ -43,6 +43,16 @@ the above: the budget and the cooldowns exist to stop her bothering him, and the
 business standing between him and something he just asked for. Her answer is still hers -- the
 prompt tells her she may say no, in character, but never that she cannot.
 
+Which leaves one thing still able to swallow a call he asked for out loud: her reply. Twice now
+she has agreed and nothing rang -- "我这边明明显示已经呼出了", then "我打了哦" / "拨了哦，接吧".
+She had decided both times; the trailing `call|why` was simply gone, and a list of the phrasings
+she might use to say it instead (CLAIMED) only ever catches the ones already seen. So where he
+asked, the question is turned around: he asked for a call, so the call happens unless she says
+no (REFUSED). That is not the model losing its say -- CALLING_ASKED tells her plainly that she
+may decline, and declining is a sentence she has every reason to write and no format to drop.
+It only stops silence from counting as a refusal. Her own calls are unchanged: there nothing
+asked for it, so she still has to reach for it, and CLAIMED is as far as prose goes.
+
 Two doors of her own, because they are not the same act. Mid-conversation is the one worth having: you are
 texting right now and she rings instead of typing. Out of the blue is server/lull.py's states --
 there is no live conversation to be past, so the state is the whole reason, the model decides,
@@ -99,6 +109,17 @@ CLAIMED = re.compile(
 # ... unless she is talking about some other time than now.
 LATER = re.compile(r"下次|下回|下一次|以后|回头|改天|今度|また今度|next time|later on", re.I)
 
+# Her turning him down, for when he asked out loud. Only ever read then, and only to decide
+# whether to let her agreement stand without the format: it is the one half of her answer that
+# is a sentence rather than a trailing tag, so it is the half worth matching on.
+# Deliberately not 没办法 ("真拿你没办法" is her giving in), not 不要 and not 以后, which she says
+# about everything else too. A word that costs a call he asked for has to mean no and nothing else.
+REFUSED = re.compile(
+    r"不行|不能|做不到|不想|不方便|现在不|待会|等会|等一下|等下|稍后|一会儿|"
+    r"下次|下回|改天|回头再|"
+    r"無理|できない|できません|ダメ|駄目|嫌だ|嫌よ|後で|あとで|今はちょっと|"
+    r"can'?t|cannot|not (?:now|right now)|rather not|maybe later|in a bit", re.I)
+
 # Whether calling is what you are talking about at all. Only used to decide whether she is told
 # she cannot (below): when nothing in the conversation is about calling, she is told nothing,
 # and there is nothing there for her to reach for.
@@ -118,6 +139,17 @@ def claimed_to_call(text: str) -> str:
             if CLAIMED.search(body) and not LATER.search(body):
                 return body.strip()[:120]
     return ""
+
+
+def refused_to_call(text: str) -> bool:
+    """Whether her reply is her saying no to the call he just asked for. Read over what she
+    actually said -- the tags and the audio filename are not her words."""
+    for line in (text or "").split("\n"):
+        parts = [p for p in line.split("|")[2:] if not p.endswith(".wav")] or [line]
+        for body in parts:
+            if REFUSED.search(body):
+                return True
+    return False
 
 
 def topic_live(recent: list[dict], n: int = 8) -> bool:
