@@ -1,12 +1,23 @@
 @echo off
-rem Amadeus launcher. The venv lives outside this folder because the ';' in
-rem "Amadeus_Steins;Gate" breaks Python virtual environments.
+rem Amadeus launcher. Creates .venv beside this file on the first run and keeps it current.
 setlocal
 cd /d "%~dp0"
-set "VENV=%LOCALAPPDATA%\Amadeus\venv"
+set "VENV=%~dp0.venv"
+
+rem Python refuses to build a virtual environment under a path containing ';', since that is
+rem what Windows separates PATH with. Say so plainly rather than failing further down.
+echo "%~dp0" | find ";" >nul
+if not errorlevel 1 (
+    echo [Amadeus] This folder's path contains a semicolon:
+    echo [Amadeus]   %~dp0
+    echo [Amadeus] Python will not create a virtual environment there. Rename the folder
+    echo [Amadeus] ^(Amadeus_Steins-Gate, say^) and run this again.
+    pause
+    exit /b 1
+)
 
 if not exist "%VENV%\Scripts\python.exe" (
-    echo [Amadeus] Creating Python environment in %VENV% ...
+    echo [Amadeus] Creating Python environment in .venv ...
     python -m venv "%VENV%" || goto :fail
     "%VENV%\Scripts\python.exe" -m pip install --upgrade pip
 )

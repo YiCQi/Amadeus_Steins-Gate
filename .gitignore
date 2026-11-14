@@ -1,4 +1,5 @@
 config.toml
+.venv/
 data/
 voice/refs/*
 !voice/refs/.gitkeep

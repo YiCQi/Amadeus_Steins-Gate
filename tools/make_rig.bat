@@ -19,7 +19,7 @@ if not exist "%SRC%" (echo not found: %SRC% & exit /b 1)
 set "ART=%~dp1"
 rem psd_to_rig.py runs in See-through's venv, or else in the app's own (start.bat installs psd-tools)
 set "PY=%ST_PY%"
-if not exist "%PY%" set "PY=%LOCALAPPDATA%\Amadeus\venv\Scripts\python.exe"
+if not exist "%PY%" set "PY=%~dp0..\.venv\Scripts\python.exe"
 if not exist "%PY%" set "PY=python"
 
 if not "%~2"=="" (

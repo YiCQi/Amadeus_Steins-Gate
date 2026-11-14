@@ -66,8 +66,15 @@ One memory for calls and chats, kept like a person's. What happened becomes date
 ## Quick start
 
 1. Install **Python 3.11+** (3.14 works).
-2. Double-click **`start.bat`**. The first run creates a virtual environment in `%LOCALAPPDATA%\Amadeus\venv` and installs the dependencies. (It lives outside this folder because the `;` in `Amadeus_Steins;Gate` breaks Python venvs.)
-3. Your browser opens the chat at <http://127.0.0.1:8710>. In **Settings** (⚙, top left), fill in any AI API:
+2. Get the files, either way:
+
+   ```
+   git clone https://github.com/YiCQi/Amadeus_Steins-Gate.git
+   ```
+
+   or download the latest [release](https://github.com/YiCQi/Amadeus_Steins-Gate/releases) and unzip it. Keep the folder somewhere with a plain path — no semicolon, which Python won't build an environment under.
+3. Double-click **`start.bat`**. The first run creates `.venv` and installs the dependencies; later runs reuse it.
+4. Your browser opens the chat at <http://127.0.0.1:8710>. In **Settings** (⚙, top left), fill in any AI API:
 
    | Provider | Provider setting | Base URL | Example model |
    |---|---|---|---|
@@ -77,8 +84,8 @@ One memory for calls and chats, kept like a person's. What happened becomes date
    | Ollama (local) | OpenAI-compatible | `http://127.0.0.1:11434/v1` | `qwen2.5:14b` (no key needed) |
    | Anthropic | Anthropic | `https://api.anthropic.com` | `claude-sonnet-5-5` |
 
-4. For her voice, run `tools\voice\install_amadeus_vits.bat` once (about 0.8 GB). Until then she uses a free online Japanese voice that isn't hers. [More on her voice](docs/voice.md), including running it on an NVIDIA GPU.
-5. Optional, with an NVIDIA GPU: one install command makes speech recognition take about 0.15 s a sentence instead of about 1 s ([Microphone](docs/using.md#microphone)).
+5. For her voice, run `tools\voice\install_amadeus_vits.bat` once (about 0.8 GB). Until then she uses a free online Japanese voice that isn't hers. [More on her voice](docs/voice.md), including running it on an NVIDIA GPU.
+6. Optional, with an NVIDIA GPU: one install command makes speech recognition take about 0.15 s a sentence instead of about 1 s ([Microphone](docs/using.md#microphone)).
 
 Then text her, or press the camera button for a video call.
 

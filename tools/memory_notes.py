@@ -7,7 +7,7 @@
     python tools/memory_notes.py check [--calibrate]                  recall tests, logged to recall_checks.jsonl
     python tools/memory_notes.py review                               have her look over her notes now (one request)
 
-Run with the app's Python (%LOCALAPPDATA%\\Amadeus\\venv\\Scripts\\python.exe). --data DIR works on another
+Run with the app's Python (.venv\\Scripts\\python.exe). --data DIR works on another
 profile (a copy, for trying things out).
 
 migrate --from DIR takes a store already prepared and reviewed (notes.json and the rest, as a dry run
